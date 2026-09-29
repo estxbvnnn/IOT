@@ -4,6 +4,7 @@ import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed, WifiOff } from
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { StatusChip } from '@/components/ui/status'
+import { GH_H, GH_W, TREE_BAND } from '@/lib/domain/layout'
 import { ADC_MAX } from '@/lib/domain/soil'
 import type { GreenhouseStatus } from '@/lib/domain/types'
 import { fmtAgo, fmtNum } from '@/lib/format'
@@ -21,9 +22,6 @@ import { BAND_TEXT, type MapGreenhouse, describeGreenhouse, pumpText } from './m
  */
 
 const MARGIN = 6
-const GH_W = 19
-const GH_H = 11
-const TREE_BAND = 6
 
 const STATUS_STYLE: Record<GreenhouseStatus, { stroke: string; fill: string; glyph: string; Icon: typeof CheckCircle2 }> = {
   ok: { stroke: 'var(--good)', fill: 'var(--surface)', glyph: 'var(--good)', Icon: CheckCircle2 },
@@ -41,13 +39,15 @@ interface SiteMapProps {
   widthM: number
   heightM: number
   substation: { x: number; y: number }
+  /** Estanque de agua (opcional): solo se dibuja si el predio lo tiene. */
+  tank?: { x: number; y: number } | null
   /** Los invernaderos son enlaces al detalle (rol con permiso greenhouse:view). */
   linkable?: boolean
   /** id de la tabla equivalente. */
   describedBy?: string
 }
 
-export function SiteMap({ items, widthM, heightM, substation, linkable = true, describedBy }: SiteMapProps) {
+export function SiteMap({ items, widthM, heightM, substation, tank = null, linkable = true, describedBy }: SiteMapProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(560)
   const [hover, setHover] = useState<string | null>(null)
@@ -88,7 +88,7 @@ export function SiteMap({ items, widthM, heightM, substation, linkable = true, d
         viewBox={`${-MARGIN} ${-MARGIN} ${vbW} ${vbH}`}
         className="block h-auto w-full"
         role="group"
-        aria-label="Mapa del predio con los diez invernaderos y la subestación del mástil"
+        aria-label={`Mapa del predio con ${items.length === 1 ? 'el invernadero' : `los ${items.length} invernaderos`} y la subestación del mástil`}
         aria-describedby={describedBy}
       >
         {/* Terreno y franja perimetral de árboles y vegetación */}
@@ -123,12 +123,14 @@ export function SiteMap({ items, widthM, heightM, substation, linkable = true, d
           </g>
         )}
 
-        {/* Estanque de acumulación de agua */}
-        <g>
-          <title>Estanque de acumulación de agua</title>
-          <ellipse cx={76} cy={56} rx={3.7} ry={2.4} fill="var(--accent)" opacity={0.3} stroke="var(--accent)" strokeWidth={0.3} />
-          {!compact && <text x={76} y={60.6} textAnchor="middle" fontSize={2} fill="var(--ink-3)">Estanque</text>}
-        </g>
+        {/* Estanque de acumulación de agua (opcional) */}
+        {tank && (
+          <g>
+            <title>Estanque de acumulación de agua</title>
+            <ellipse cx={tank.x} cy={tank.y} rx={3.7} ry={2.4} fill="var(--accent)" opacity={0.3} stroke="var(--accent)" strokeWidth={0.3} />
+            {!compact && <text x={tank.x} y={tank.y + 4.6} textAnchor="middle" fontSize={2} fill="var(--ink-3)">Estanque</text>}
+          </g>
+        )}
 
         {/* Distancia a la subestación: solo del invernadero que tiene el foco */}
         {active && (

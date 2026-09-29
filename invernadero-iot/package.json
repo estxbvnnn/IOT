@@ -22,6 +22,8 @@
     "db:migrate": "npm --prefix dashboard run db:migrate",
     "db:seed": "npm --prefix dashboard run db:seed --",
     "db:retention": "npm --prefix dashboard run db:retention --",
-    "db:reset-data": "npm --prefix dashboard run db:reset-data --"
+    "db:reset-data": "npm --prefix dashboard run db:reset-data --",
+    "firmware:unico": "node firmware/tools/generar_archivo_unico.mjs",
+    "firmware:unico:check": "node firmware/tools/generar_archivo_unico.mjs --check"
   }
 }

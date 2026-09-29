@@ -2,7 +2,7 @@
   "name": "invernadero-iot-dashboard",
   "version": "1.0.0",
   "private": true,
-  "description": "Dashboard IoT para el monitoreo y riego automático de 10 invernaderos (INACAP · Seguridad IoT).",
+  "description": "Dashboard IoT para el monitoreo y riego automático de invernaderos, con cantidad configurable (INACAP · Seguridad IoT).",
   "engines": {
     "node": ">=22.12"
   },

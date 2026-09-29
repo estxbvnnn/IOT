@@ -3,17 +3,53 @@
 Nodo de riego automático: **DHT22** + **YL-38/YL-69** + **bomba** por relé, con las bandas de humedad de la
 imagen de la clase (0–1023) y envío al dashboard (Supabase) por HTTP(S). Evolución del «Código unificado» del informe.
 
+## Recomendado para Arduino IDE: un solo archivo
+
+**Abra `nodo_invernadero_unico/nodo_invernadero_unico.ino`.** Tiene *todo* el firmware adentro: no depende de ningún otro
+archivo —ni siquiera de `secrets.h`— y puede copiarlo suelto a cualquier carpeta de sketches.
+
+1. **Placa ESP32** (una vez): *Archivo → Preferencias → URLs adicionales del gestor de tarjetas*
+   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`, y en *Herramientas → Placa → Gestor de tarjetas*
+   instalar **esp32 by Espressif Systems** (la versión modular se compiló con la 3.3.12).
+2. **Bibliotecas** (una vez), en *Herramientas → Administrar bibliotecas*: **DHT sensor library** y **Adafruit Unified Sensor**
+   (Adafruit), y **ArduinoJson** (Benoit Blanchon, versión 7.x).
+3. **Editar solo el bloque «CONFIGURACION DEL USUARIO»** (arriba del archivo): `WIFI_SSID`, `WIFI_PASS`, `SERVER_URL`
+   y `DEVICE_TOKEN`.
+4. *Herramientas → Placa*: **ESP32 Dev Module** (mapa de pines de la DevKit V1) o **Heltec WiFi LoRa 32(V2)** (mapa
+   alternativo, se detecta solo). Elegir el puerto, *Subir* y abrir el *Monitor Serie* a **115200**.
+
+> `SERVER_URL` debe ser la **IP del PC** en la red local (p. ej. `http://192.168.1.50:3000`), con el dashboard iniciado con
+> `npm run dev:lan` y el puerto 3000 permitido en el firewall de Windows: `localhost` **no** sirve (para el ESP32 es él mismo).
+> **Solo placas ESP32** (no Arduino UNO/Nano/Mega; con otra placa el archivo se detiene con un `#error` claro).
+> El archivo lleva sus claves reales (WiFi y token) una vez que las complete: si sube el proyecto a Git, que sea a un repositorio **privado**.
+
+El archivo único está **generado** desde la versión modular, que sigue siendo la fuente y la que tiene pruebas de host: si
+cambia la lógica, edite `nodo_invernadero/` y regenere con `npm run firmware:unico` (desde la carpeta raíz del proyecto);
+`npm run firmware:unico:check` comprueba que esté al día. Es el mismo código: solo cambian la ubicación de la configuración
+(arriba, en vez de `secrets.h`), los textos que nombraban `secrets.h` y un `#error` para placas que no son ESP32.
+
+**Qué se verificó:** el generador (`--check`); que no queda ningún `#include` local ni `secrets.h`; que el preprocesador de
+`arduino-cli` inserta los prototipos automáticos en un punto válido (ninguno para funciones de `namespace`, todos después de
+los tipos que usan); y que, preprocesado, tiene los mismos tokens que la versión modular salvo dos mensajes de consola.
+**Pendiente:** compilarlo para ESP32 y probarlo en la placa.
+
+## Estructura de carpetas
+
 ```
 firmware/
-├── nodo_invernadero/          ← abrir esta carpeta en el Arduino IDE (el .ino se llama igual)
+├── nodo_invernadero_unico/    ← PARA ARDUINO IDE: abrir este .ino (todo en un solo archivo, generado)
+│   └── nodo_invernadero_unico.ino
+├── nodo_invernadero/          ← versión modular: la fuente y la que tiene pruebas de host
 │   ├── nodo_invernadero.ino   setup() y loop(): une todo
 │   ├── config.h               pines (2 mapas), tiempos, opciones
-│   ├── secrets.example.h      plantilla → copiar como secrets.h (no se sube a Git)
+│   ├── secrets.example.h      plantilla → copiar como secrets.h (lleva claves: repositorio privado)
 │   ├── riego.h                reglas del riego (lógica pura, probada en el PC)
 │   ├── envio.h                cuándo enviar / reintentar tramas (lógica pura, probada en el PC)
 │   ├── protocolo.h            JSON de la trama y de la respuesta (docs/contrato-api.md)
 │   ├── sensores.h             DHT22, YL-38, BH1750, anemómetro y relé
 │   └── red.h                  WiFi + HTTP(S) en una tarea aparte (núcleo 0)
+├── tools/
+│   └── generar_archivo_unico.mjs   arma el archivo único desde la versión modular (npm run firmware:unico)
 └── test/                      pruebas de host (sin placa): 70 pruebas, ver test/README.md
 ```
 
@@ -21,7 +57,10 @@ firmware/
   [`docs/hardware.md`](../docs/hardware.md)
 * **Protocolo con el servidor:** [`docs/contrato-api.md`](../docs/contrato-api.md)
 
-## En 4 comandos (arduino-cli)
+## En 4 comandos (arduino-cli, versión modular)
+
+Para el Arduino IDE use el archivo único de arriba; esto es para quien compila por línea de comandos la versión modular
+(el archivo único se compila igual, apuntando a `firmware/nodo_invernadero_unico`).
 
 ```bash
 arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json

@@ -14,6 +14,7 @@ export const AUDIT_ACTIONS = [
   'alert.ack', 'data.export',
   'user.create', 'user.update', 'user.deactivate', 'user.activate', 'user.password_reset', 'user.mfa_reset', 'user.greenhouses',
   'device.create', 'device.rotate_token', 'device.enable', 'device.disable', 'device.auth_failed', 'device.first_seen',
+  'greenhouse.create', 'greenhouse.update', 'greenhouse.archive', 'greenhouse.restore', 'site.update',
   'audit.verify', 'system.seed',
 ] as const
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
@@ -65,6 +66,8 @@ export interface AuditRow {
   actorRole: string | null
   action: string
   target: string | null
+  /** Código legible del invernadero cuando el objetivo es «greenhouse:<id>» (la bitácora solo guarda el id). */
+  targetCode: string | null
   detail: Record<string, unknown>
   ip: string | null
   /** Primeros bytes del hash de la fila (para mostrar el encadenamiento). */
@@ -84,22 +87,28 @@ export async function listAudit(db: Db, f: AuditFilter = {}): Promise<{ rows: Au
   const limit = Math.min(Math.max(f.limit ?? 50, 1), 200)
   const prefix = f.actionPrefix ? `${f.actionPrefix.replace(/[%_\\]/g, '\\$&')}%` : null
   const actor = f.actor ? `%${f.actor.replace(/[%_\\]/g, '\\$&')}%` : null
+  // Primero se toma la página (con su límite) y solo a esas filas se les busca el código del invernadero.
   const rows = await db<{
     id: number; ts: Date; actor_label: string; actor_role: string | null; action: string
-    target: string | null; detail: Record<string, unknown>; ip: string | null; hash: string
+    target: string | null; target_code: string | null; detail: Record<string, unknown>; ip: string | null; hash: string
   }[]>`
-    select id, ts, actor_label, actor_role, action, target, detail, ip, encode(hash, 'hex') as hash
-      from iot.audit_log
-     where (${f.beforeId ?? null}::bigint is null or id < ${f.beforeId ?? null})
-       and (${prefix}::text is null or action like ${prefix})
-       and (${actor}::text is null or actor_label ilike ${actor})
-     order by id desc
-     limit ${limit + 1}`
+    with page as (
+      select id, ts, actor_label, actor_role, action, target, detail, ip, encode(hash, 'hex') as hash
+        from iot.audit_log
+       where (${f.beforeId ?? null}::bigint is null or id < ${f.beforeId ?? null})
+         and (${prefix}::text is null or action like ${prefix})
+         and (${actor}::text is null or actor_label ilike ${actor})
+       order by id desc
+       limit ${limit + 1})
+    select p.*, g.code as target_code
+      from page p
+      left join iot.greenhouses g on p.target = 'greenhouse:' || g.id::text
+     order by p.id desc`
   const page = rows.slice(0, limit)
   return {
     rows: page.map((r) => ({
       id: r.id, ts: r.ts.toISOString(), actorLabel: r.actor_label, actorRole: r.actor_role, action: r.action,
-      target: r.target, detail: r.detail, ip: r.ip, hash: r.hash.slice(0, 16),
+      target: r.target, targetCode: r.target_code, detail: r.detail, ip: r.ip, hash: r.hash.slice(0, 16),
     })),
     nextBefore: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
   }

@@ -2,7 +2,7 @@
  * Controlador de riego del nodo — implementación de referencia en TypeScript.
  *
  * Es la MISMA lógica normativa del contrato (docs/contrato-api.md §6 y §7) que ejecuta el firmware
- * del ESP32 (firmware/nodo_invernadero/riego.h). Aquí sirve para simular los diez nodos sin hardware
+ * del ESP32 (firmware/nodo_invernadero/riego.h). Aquí sirve para simular los nodos sin hardware
  * y para verificar con pruebas que las protecciones del informe se cumplen. Es PURO: el tiempo se
  * inyecta (`nowMs`), no toca red ni base de datos.
  *

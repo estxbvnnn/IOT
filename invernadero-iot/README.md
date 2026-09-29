@@ -1,4 +1,4 @@
-# Invernadero IoT · monitoreo y riego automático de 10 invernaderos
+# Invernadero IoT · monitoreo y riego automático de invernaderos
 
 Implementación funcional del informe **«Diseño de una solución IoT para el monitoreo y riego automático de invernaderos»**
 (INACAP · Seguridad IoT · alternativa 2, bajo costo). Incluye el **firmware del nodo ESP32**, una **base de datos en Supabase**
@@ -20,7 +20,8 @@ y un **dashboard web en TypeScript** con control de acceso por rol.
 
 | Carpeta | Qué es |
 |---|---|
-| `firmware/nodo_invernadero/` | Sketch de Arduino para ESP32: DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Guía completa en [`docs/hardware.md`](docs/hardware.md). |
+| `firmware/nodo_invernadero_unico/` | **El firmware en UN solo archivo `.ino`** (para Arduino IDE, sin depender de otros archivos): DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Es la versión recomendada para cargar en la placa. |
+| `firmware/nodo_invernadero/` | El mismo firmware dividido en módulos (es la fuente del archivo único y tiene pruebas de host). Guía completa en [`docs/hardware.md`](docs/hardware.md). |
 | `dashboard/` | Aplicación web **Next.js 16 + React 19 + TypeScript estricto**: API de recepción de los nodos, paneles por rol, gráficos, alertas, órdenes de riego, bitácora. |
 | `supabase/migrations/` | Esquema SQL (PostgreSQL 17): tablas, permisos mínimos, bitácora inmutable. |
 | `docs/` | [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`hardware.md`](docs/hardware.md), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
@@ -33,7 +34,7 @@ firmware queda en C++ (Arduino) porque el ESP32 lo exige.
 
 ```
  ┌────────────────┐   HTTPS · JSON · Bearer   ┌─────────────────────────┐   SQL sobre TLS verificado   ┌────────────────────┐
- │ Nodo ESP32 ×10 │ ────────────────────────▶ │  Dashboard (Next.js)    │ ───────────────────────────▶ │ Supabase Postgres  │
+ │ Nodo ESP32 ×N  │ ────────────────────────▶ │  Dashboard (Next.js)    │ ───────────────────────────▶ │ Supabase Postgres  │
  │ DHT22 · YL-38  │ ◀──── cfg + órdenes ───── │  /api/ingest · páginas  │   rol iot_app (mín. priv.)   │ esquema privado iot│
  │ relé → bomba   │                           │  sesiones · RBAC · CSP  │                              │ RLS + bitácora     │
  └────────────────┘                           └─────────────────────────┘                              └────────────────────┘
@@ -52,7 +53,7 @@ Requisitos: **Node.js ≥ 22.12** y el archivo `env.txt` de Supabase (ya está j
 
 ```bash
 npm install          # instala las dependencias de dashboard/
-npm run setup        # crea .env.local, migra la base y siembra invernaderos, usuarios demo y nodos (sin datos simulados)
+npm run setup        # crea .env.local, migra la base y siembra el predio de ejemplo (10 invernaderos), usuarios demo y nodos (sin datos simulados)
 npm run dev          # http://localhost:3000   (también sirve `npm start`)
 ```
 
@@ -60,12 +61,14 @@ Estos comandos se pueden ejecutar **desde esta carpeta o desde `dashboard/`**: l
 levanta el servidor de desarrollo; la versión de producción es `npm run build` y luego `npm run start:prod`).
 
 * **Cuentas demo** (una por rol, con contraseña aleatoria): `dashboard/.demo-credentials.md`.
-* **Datos en vivo sin hardware**: en otra terminal, `npm run demo` (simula los 10 nodos y el mástil, con un guion de alertas).
-  Variantes: `npm run simulate -- --speed 120`, `--scenario heat|fault|offline|wind|dry|irrigate`, `--only I1,I3`.
+* **Datos en vivo sin hardware**: en otra terminal, `npm run demo` (simula los nodos sembrados y el mástil, con un guion de alertas).
+  Variantes: `npm run simulate -- --speed 120`, `--scenario heat|fault|offline|wind|dry|irrigate`, `--only I1,I3`, y
+  `--add I11=<token>` para simular un invernadero creado desde el panel.
   `npm run demo` usa `--fast`: fija «Reporte del nodo» en 15 s para ver alertas en minutos y lo **restaura a 300 s al salir con Ctrl+C**
   (si cierras la terminal a la fuerza, vuelve a dejarlo en 300 s desde el panel de umbrales de cada invernadero).
-* **Con un ESP32 real**: `npm run dev:lan`, y carga en `secrets.h` la URL `http://<IP-de-tu-PC>:3000` y el token del nodo
-  (el token está en `dashboard/.demo-devices.json`; ver [`docs/hardware.md`](docs/hardware.md)).
+* **Con un ESP32 real (Arduino IDE)**: `npm run dev:lan`, abre `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` y completa su bloque
+  «CONFIGURACION DEL USUARIO»: WiFi, la URL `http://<IP-de-tu-PC>:3000` y el token del nodo. El token de un invernadero **nuevo** se muestra una
+  sola vez al crearlo en *Invernaderos → Nuevo invernadero*; los de ejemplo están en `dashboard/.demo-devices.json` (ver [`docs/hardware.md`](docs/hardware.md)).
 
 Hasta que un nodo reporte por primera vez, el panel muestra «Sin datos»; si un nodo deja de reportar, pasa a «Sin conexión» a los 15 min.
 **El simulador escribe en la MISMA base que los nodos reales**: no lo uses junto con ESP32 reales. Si lo usaste, limpia con
@@ -78,10 +81,25 @@ Implementados en `dashboard/src/lib/rbac.ts` (matriz de la tabla 11 del informe)
 | Rol | Puede |
 |---|---|
 | Dueño | Ver el predio, alertas e historial de **todos** los sectores; exportar CSV. Solo lectura. |
-| Administrador | Todo: usuarios, tokens de nodos, umbrales, riego, bitácora. |
+| Administrador | Todo: usuarios, **invernaderos (alta, edición y baja)**, ajustes del predio, tokens de nodos, umbrales, riego, bitácora. |
 | Ingeniero agrónomo | Analizar historial, ajustar umbrales, programar calendarios de riego, reconocer alertas. |
 | Operador de campo | Ver alertas y **accionar el riego solo en sus sectores asignados** (confirmación en 2 pasos). |
 | Técnico | Solo lectura: calidad de enlace (RSSI/SNR), estado de equipos y bitácora. Nunca acciona actuadores. |
+
+## La cantidad de invernaderos no es fija
+
+Los 10 del informe son solo el predio de ejemplo. El administrador maneja los invernaderos desde **Invernaderos** (menú lateral):
+
+* **Nuevo invernadero**: nombre, cultivo, superficie, caudal de la bomba y posición en el mapa (clic en el mapa o el botón «Sugerir un lugar
+  libre», que propone el sitio libre más cercano a la subestación). En una sola operación se crean el invernadero, sus umbrales (por defecto
+  o copiados de otro) y su **nodo con su token**, que se muestra una vez. El código (`I11`, o el que elijas) es único y no cambia.
+* **Editar** los datos y la posición, **Ajustes del predio** (tamaño del mapa, subestación, estanque) para que el predio crezca con los invernaderos.
+* **Dar de baja / Reactivar**: nada se borra. Un invernadero dado de baja conserva todo su historial, sale del panel y su nodo queda
+  deshabilitado (el servidor rechaza sus tramas). El nodo físico sigue regando de forma autónoma hasta que se apague.
+* Un invernadero nuevo no lo ve ningún operador hasta que se le asigne en **Usuarios**. No hay un máximo práctico (hasta 32.767).
+* Todo queda en la bitácora (`greenhouse.create`, `.update`, `.archive`, `.restore` y `site.update`).
+
+La migración es `supabase/migrations/0003_scalable_greenhouses.sql` (se aplica con `npm run db:migrate`).
 
 ## Cómo está integrado Supabase
 
@@ -134,6 +152,8 @@ cd ../firmware/test && ./ejecutar_pruebas.sh     # lógica del nodo compilada en
 * Activa el 2FA obligatorio: `MFA_REQUIRED_ROLES=admin,owner`.
 * **Rota la contraseña de `postgres`** (está en `env.txt` y en `dashboard/.env.admin.local`) y borra el `env.txt` cuando termines.
   Cambia o desactiva las cuentas demo (`Usuarios → Desactivar`).
+* Este repositorio incluye archivos con credenciales (`env.txt`, `dashboard/.env.local`, `dashboard/.env.admin.local`, `dashboard/.demo-*`):
+  **mantenlo PRIVADO** y no lo publiques ni lo compartas fuera del equipo.
 * Programa `npm run db:retention` (90 días de datos crudos, luego promedios horarios) o `pg_cron`.
 
 ## Limitaciones conocidas

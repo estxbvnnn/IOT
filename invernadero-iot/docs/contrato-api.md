@@ -139,7 +139,7 @@ El servidor procesa los eventos de forma **idempotente**: un `pump_on` con un ri
 | HTTP | Cuerpo | Qué debe hacer el nodo |
 |---|---|---|
 | 400 | `{"ok":false,"error":"invalid","detalle":[…]}` | Descartar la trama; revisar el firmware. |
-| 401 | `{"ok":false,"error":"unauthorized"}` | Reintentar en ≥ 60 s. **Seguir operando de forma autónoma.** |
+| 401 | `{"ok":false,"error":"unauthorized"}` | Token desconocido, nodo deshabilitado o invernadero **dado de baja**. Reintentar en ≥ 60 s. **Seguir operando de forma autónoma.** |
 | 413 | `{"ok":false,"error":"too_large"}` | Descartar la trama. |
 | 429 | `{"ok":false,"error":"rate_limited"}` + `Retry-After` | Esperar lo indicado. |
 | 5xx / sin red | — | Conservar `ev` y `acks` para la próxima trama y seguir operando. |

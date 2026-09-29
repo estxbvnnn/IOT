@@ -1,6 +1,7 @@
 import type { Db } from '../db/types'
 import { type Actor, ForbiddenError, can, canAccessGreenhouse, scopeOf } from '../rbac'
 import { offlineAfterS } from '../alerts/engine'
+import { GREENHOUSE_CODE_RE } from '../domain/greenhouse'
 import { soilBand } from '../domain/soil'
 import {
   type AlertDTO, type GreenhouseStatus, type GreenhouseSummary, type IrrigationEventDTO, type PumpState,
@@ -31,13 +32,18 @@ interface GhRow {
 /** Punto de referencia de la subestación (mástil central) para las distancias. */
 export interface SiteGeometry { widthM: number; heightM: number; substationX: number; substationY: number }
 
-async function loadGeometry(db: Db): Promise<SiteGeometry & { siteName: string; windWarn: number; windCrit: number }> {
-  const [s] = await db<{ site_name: string; width_m: number; height_m: number; substation_x_m: number; substation_y_m: number; wind_warn_ms: number; wind_crit_ms: number }[]>`
-    select site_name, width_m, height_m, substation_x_m, substation_y_m, wind_warn_ms, wind_crit_ms from iot.site_settings where id = 1`
+async function loadGeometry(db: Db): Promise<SiteGeometry & { siteName: string; windWarn: number; windCrit: number; tank: { x: number; y: number } | null }> {
+  const [s] = await db<{
+    site_name: string; width_m: number; height_m: number; substation_x_m: number; substation_y_m: number
+    wind_warn_ms: number; wind_crit_ms: number; tank_x_m: number | null; tank_y_m: number | null
+  }[]>`
+    select site_name, width_m, height_m, substation_x_m, substation_y_m, wind_warn_ms, wind_crit_ms, tank_x_m, tank_y_m
+      from iot.site_settings where id = 1`
   return {
     siteName: s?.site_name ?? 'Predio agrícola', widthM: s?.width_m ?? 100, heightM: s?.height_m ?? 100,
     substationX: s?.substation_x_m ?? 50, substationY: s?.substation_y_m ?? 50,
     windWarn: s?.wind_warn_ms ?? 15, windCrit: s?.wind_crit_ms ?? 25,
+    tank: s && s.tank_x_m !== null && s.tank_y_m !== null ? { x: s.tank_x_m, y: s.tank_y_m } : null,
   }
 }
 
@@ -59,7 +65,8 @@ async function loadGreenhouseSummaries(db: Db, ids: readonly number[] | null, no
         join iot.thresholds t on t.greenhouse_id = g.id
         left join iot.nodes n on n.greenhouse_id = g.id
         left join iot.node_state s on s.node_id = n.id
-       where ${all}::boolean or g.id = any(${idArray ?? db.array([], 21)}::smallint[])
+       where g.archived_at is null
+         and (${all}::boolean or g.id = any(${idArray ?? db.array([], 21)}::smallint[]))
        order by g.id`,
     db<{ greenhouse_id: number; severity: 'critical' | 'warning' | 'info'; n: number }[]>`
       select greenhouse_id, severity, count(*)::int as n from iot.alerts
@@ -160,7 +167,7 @@ export async function getSiteOverview(db: Db, actor: Actor, now = new Date()): P
   const live = greenhouses.filter((g) => g.online)
   return {
     siteName: geom.siteName, widthM: geom.widthM, heightM: geom.heightM,
-    substation: { x: geom.substationX, y: geom.substationY }, generatedAt: now.toISOString(),
+    substation: { x: geom.substationX, y: geom.substationY }, tank: geom.tank, generatedAt: now.toISOString(),
     greenhouses, wind, recentAlerts: activeAlerts.slice(0, 8),
     kpis: {
       total: greenhouses.length, ok: count('ok'), warning: count('warning'), critical: count('critical'),
@@ -183,11 +190,14 @@ export interface GreenhouseDetail {
   geometry: SiteGeometry
 }
 
-/** Resuelve el código (I1…I10) a id y comprueba el alcance. Devuelve null si no existe o no le corresponde. */
+/**
+ * Resuelve el código a id (sin distinguir mayúsculas) y comprueba el alcance. Devuelve null si no existe, está
+ * dado de baja o no le corresponde al usuario (para ellos «no existe»: no se revela nada).
+ */
 export async function resolveGreenhouse(db: Db, actor: Actor, code: string): Promise<number | null> {
   if (!can(actor.role, 'greenhouse:view')) return null
-  if (!/^I\d{1,2}$/.test(code)) return null
-  const [g] = await db<{ id: number }[]>`select id from iot.greenhouses where code = ${code}`
+  if (!GREENHOUSE_CODE_RE.test(code)) return null
+  const [g] = await db<{ id: number }[]>`select id from iot.greenhouses where lower(code) = lower(${code}) and archived_at is null`
   if (!g || !canAccessGreenhouse(actor, g.id)) return null
   return g.id
 }

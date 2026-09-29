@@ -33,6 +33,7 @@ export const PERMISSIONS = [
   'irrigation:command',   // accionar el riego manualmente
   'devices:view',         // calidad de enlace (RSSI/SNR) y estado de los equipos
   'devices:manage',       // alta/baja de nodos y rotación de llaves
+  'greenhouses:manage',   // alta, edición y baja de invernaderos; ajustes del predio (cantidad NO fija)
   'audit:view',           // leer la bitácora
   'users:manage',         // crear usuarios y asignar permisos
   'export:csv',           // exportar historial

@@ -4,7 +4,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: { default: 'Invernadero IoT', template: '%s · Invernadero IoT' },
-  description: 'Monitoreo y riego automático de diez invernaderos: sensores DHT22 y YL-38, bomba de agua y alertas.',
+  description: 'Monitoreo y riego automático de invernaderos: sensores DHT22 y YL-38, bomba de agua y alertas.',
   robots: { index: false, follow: false },
 }
 

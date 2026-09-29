@@ -113,7 +113,7 @@ export function UserRowActions({ user, isSelf, greenhouses }: { user: RowUser; i
 
       <Dialog open={modal === 'access'} onClose={close} locked={pending} width={520} title={`Rol y sectores de ${user.name}`} description={user.email}>
         <div className="flex flex-col gap-4">
-          <AccessFields role={role} onRole={setRole} selected={ids} onToggle={(g) => setIds((s) => (s.includes(g) ? s.filter((x) => x !== g) : [...s, g]))} greenhouses={greenhouses} errors={errors} />
+          <AccessFields role={role} onRole={setRole} selected={ids} onToggle={(g) => setIds((s) => (s.includes(g) ? s.filter((x) => x !== g) : [...s, g]))} onSetAll={setIds} greenhouses={greenhouses} errors={errors} />
           {role !== user.role && <p className="rounded-lg bg-warn-wash px-3 py-2 text-[12.5px] text-ink">Al cambiar el rol se cierran las sesiones de esta persona: tendrá que volver a iniciar sesión.</p>}
           {errorBox}
           <div className="flex justify-end gap-2">

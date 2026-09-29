@@ -1,4 +1,4 @@
-import { Bell, Cpu, LayoutDashboard, LogOut, ScrollText, UserCog, Users, Droplets } from 'lucide-react'
+import { Bell, Cpu, LayoutDashboard, LogOut, ScrollText, Sprout, UserCog, Users, Droplets } from 'lucide-react'
 import { logoutAction } from '@/app/actions/auth'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
 import { type Permission, ROLE_LABELS, type Role, can } from '@/lib/rbac'
@@ -22,6 +22,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: '/', label: 'Predio', icon: <LayoutDashboard size={17} aria-hidden />, permission: 'site:view' },
   { href: '/alerts', label: 'Alertas', icon: <Bell size={17} aria-hidden />, permission: 'alerts:view', badge: 'alerts' },
+  { href: '/greenhouses', label: 'Invernaderos', icon: <Sprout size={17} aria-hidden />, permission: 'greenhouses:manage' },
   { href: '/devices', label: 'Equipos', icon: <Cpu size={17} aria-hidden />, permission: 'devices:view' },
   { href: '/audit', label: 'Bitácora', icon: <ScrollText size={17} aria-hidden />, permission: 'audit:view' },
   { href: '/users', label: 'Usuarios', icon: <Users size={17} aria-hidden />, permission: 'users:manage' },

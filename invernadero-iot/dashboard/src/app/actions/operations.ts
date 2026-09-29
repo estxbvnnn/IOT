@@ -21,7 +21,7 @@ import { thresholdsPatchSchema, updateThresholds } from '@/lib/services/threshol
  * directamente con un POST, aunque la interfaz no muestre el botón.
  */
 
-const ghId = z.number().int().min(1).max(99)
+const ghId = z.number().int().min(1).max(32767) // smallint: la cantidad de invernaderos ya no tiene un tope fijo
 const uuid = z.uuid()
 
 export async function requestIrrigationAction(input: { greenhouseId: number; durationS: number }): Promise<ActionResult<CommandDTO>> {

@@ -36,6 +36,11 @@ export const AUDIT_LABEL: Record<AuditAction, string> = {
   'device.disable': 'Nodo deshabilitado',
   'device.auth_failed': 'Credencial de nodo rechazada',
   'device.first_seen': 'Primera trama de un nodo',
+  'greenhouse.create': 'Invernadero creado',
+  'greenhouse.update': 'Invernadero modificado',
+  'greenhouse.archive': 'Invernadero dado de baja',
+  'greenhouse.restore': 'Invernadero reactivado',
+  'site.update': 'Ajustes del predio modificados',
   'audit.verify': 'Verificación de la cadena',
   'system.seed': 'Carga inicial de datos',
 }
@@ -54,15 +59,20 @@ export const AUDIT_GROUPS: readonly { prefix: string; label: string }[] = [
   { prefix: 'alert.', label: 'Alertas' },
   { prefix: 'user.', label: 'Usuarios' },
   { prefix: 'device.', label: 'Equipos y nodos' },
+  { prefix: 'greenhouse.', label: 'Invernaderos' },
+  { prefix: 'site.', label: 'Predio' },
   { prefix: 'data.', label: 'Exportaciones' },
   { prefix: 'audit.', label: 'Auditoría' },
 ]
 
-/** «greenhouse:3» → «I3»; «node:7» → «Nodo 7»; «user:…» → «Usuario …a1b2c3d4». Texto siempre inerte. */
-export function fmtTarget(target: string | null): string {
+/**
+ * «greenhouse:3» → su código (I3, Tomates-Norte…); «node:7» → «Nodo 7»; «user:…» → «Usuario …a1b2c3d4».
+ * `code` es el código real del invernadero (la bitácora guarda solo el id). Texto siempre inerte.
+ */
+export function fmtTarget(target: string | null, code?: string | null): string {
   if (!target) return '—'
   const [kind, id = ''] = target.split(':')
-  if (kind === 'greenhouse') return `I${id}`
+  if (kind === 'greenhouse') return code ?? `Invernadero #${id}`
   if (kind === 'node') return `Nodo ${id}`
   if (kind === 'user') return `Usuario …${id.slice(-8)}`
   if (kind === 'site') return 'Predio'

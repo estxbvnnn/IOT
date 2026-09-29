@@ -52,7 +52,7 @@ export function AuditTable({ rows }: { rows: AuditRow[] }) {
                 <div className="font-medium text-ink">{auditLabel(r.action)}</div>
                 <div className="font-mono text-[11.5px] text-ink-3">{r.action}</div>
               </td>
-              <td className="whitespace-nowrap text-ink-2">{fmtTarget(r.target)}</td>
+              <td className="whitespace-nowrap text-ink-2">{fmtTarget(r.target, r.targetCode)}</td>
               <td><Detail detail={r.detail} /></td>
               <td className="whitespace-nowrap font-mono text-[12px] text-ink-2">{r.ip ?? '—'}</td>
               <td className="whitespace-nowrap font-mono text-[11.5px] text-ink-3">{r.hash}</td>

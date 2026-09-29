@@ -66,6 +66,8 @@ interface NodeRow {
   cal_wet: number
   code: string | null
   flow_lph: number | null
+  /** Baja lógica del invernadero: sus nodos no reportan (defensa en profundidad además de `enabled`). */
+  archived_at: Date | null
   soil_on: number | null
   soil_off: number | null
   soil_sat: number | null
@@ -136,15 +138,15 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
   if (Buffer.byteLength(input.rawBody, 'utf8') > FRAME_MAX_BYTES) return { status: 413, body: { ok: false, error: 'too_large' } }
 
   const [node] = await db<NodeRow[]>`
-    select n.id, n.kind, n.greenhouse_id, n.label, n.enabled, n.cal_dry, n.cal_wet, g.code, g.flow_lph,
+    select n.id, n.kind, n.greenhouse_id, n.label, n.enabled, n.cal_dry, n.cal_wet, g.code, g.flow_lph, g.archived_at,
            t.soil_on, t.soil_off, t.soil_sat, t.temp_max, t.temp_heat, t.temp_cold, t.temp_frost,
            t.hum_air_min, t.hum_air_max, t.pump_max_s, t.pump_wait_s, t.interval_s, t.version
       from iot.nodes n
       left join iot.greenhouses g on g.id = n.greenhouse_id
       left join iot.thresholds t on t.greenhouse_id = n.greenhouse_id
      where n.token_hash = ${hashToken(token)}`
-  if (!node || !node.enabled) {
-    await noteAuthFailure(db, input.ip, node ? 'disabled' : 'unknown_token', now)
+  if (!node || !node.enabled || node.archived_at) {
+    await noteAuthFailure(db, input.ip, !node ? 'unknown_token' : node.archived_at ? 'archived' : 'disabled', now)
     return { status: 401, body: { ok: false, error: 'unauthorized' } }
   }
 

@@ -41,7 +41,7 @@ export function UsersTable({ users, currentUserId, greenhouses }: { users: UserD
                     u.greenhouseIds.length > 0 ? (
                       <div className="flex max-w-[190px] flex-wrap gap-1">
                         {u.greenhouseIds.map((id) => (
-                          <span key={id} className="rounded-md border border-line-strong px-1.5 py-px text-[12px] font-semibold text-ink-2">{codeOf.get(id) ?? `I${id}`}</span>
+                          <span key={id} className="rounded-md border border-line-strong px-1.5 py-px text-[12px] font-semibold text-ink-2">{codeOf.get(id) ?? `#${id}`}</span>
                         ))}
                       </div>
                     ) : (

@@ -1,3 +1,6 @@
+// PARA ARDUINO IDE USE ../nodo_invernadero_unico/nodo_invernadero_unico.ino
+// (todo en un solo archivo, no depende de otros). Esta version modular es la
+// fuente y la que tiene pruebas de host.
 /* =====================================================================
    NODO DEL INVERNADERO  -  monitoreo y riego automatico (ESP32)
    Evolucion del "Codigo unificado" (seccion 17 del informe):

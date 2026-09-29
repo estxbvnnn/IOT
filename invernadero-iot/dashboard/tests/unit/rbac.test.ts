@@ -23,7 +23,7 @@ describe('matriz de permisos por rol (informe, tabla 11)', () => {
   }
 
   it('el dueño es de solo lectura: ninguna escritura ni actuador', () => {
-    for (const p of ['alerts:ack', 'thresholds:edit', 'schedules:edit', 'irrigation:command', 'devices:manage', 'users:manage'] as const) {
+    for (const p of ['alerts:ack', 'thresholds:edit', 'schedules:edit', 'irrigation:command', 'devices:manage', 'greenhouses:manage', 'users:manage'] as const) {
       expect(can('owner', p)).toBe(false)
     }
   })
@@ -36,10 +36,11 @@ describe('matriz de permisos por rol (informe, tabla 11)', () => {
     expect(can('technician', 'audit:view')).toBe(true)
   })
 
-  it('solo el administrador gestiona usuarios, llaves de dispositivos y ve todo', () => {
+  it('solo el administrador gestiona usuarios, llaves de dispositivos e invernaderos, y ve todo', () => {
     for (const role of ROLES) {
       expect(can(role, 'users:manage')).toBe(role === 'admin')
       expect(can(role, 'devices:manage')).toBe(role === 'admin')
+      expect(can(role, 'greenhouses:manage')).toBe(role === 'admin')
     }
   })
 

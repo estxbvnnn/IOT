@@ -20,7 +20,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </span>
           <div>
             <h1 className="text-[20px] font-semibold tracking-tight text-ink">Invernadero IoT</h1>
-            <p className="text-[13px] text-ink-3">Monitoreo y riego automático · 10 invernaderos</p>
+            <p className="text-[13px] text-ink-3">Monitoreo y riego automático de invernaderos</p>
           </div>
         </div>
         <div className="card p-6">

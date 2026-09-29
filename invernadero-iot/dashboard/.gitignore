@@ -6,12 +6,14 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 
-# secretos: NUNCA se suben al repositorio
-.env
-.env.*
-!.env.example
-.demo-credentials.md
-.demo-devices.json
+# Credenciales: .env.local, .env.admin.local, .demo-credentials.md y .demo-devices.json se versionan A PROPÓSITO
+# (decisión del equipo: todo el proyecto va en un solo repositorio). Por eso el repositorio debe ser PRIVADO.
+# Para volver a excluirlas, descomenta estas líneas:
+# .env
+# .env.*
+# !.env.example
+# .demo-credentials.md
+# .demo-devices.json
 
 # artefactos locales
 npm-debug.log*

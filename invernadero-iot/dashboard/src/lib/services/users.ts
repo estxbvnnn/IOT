@@ -28,7 +28,7 @@ export const createUserSchema = z.object({
   name: z.string().trim().min(2, 'Ingresa el nombre.').max(120),
   email: z.string().trim().toLowerCase().max(254).pipe(z.email('Correo inválido.')),
   role: z.enum(ROLES),
-  greenhouseIds: z.array(z.number().int().min(1).max(99)).max(99).default([]),
+  greenhouseIds: z.array(z.number().int().min(1).max(32767)).max(5000).default([]),
 })
 export type CreateUserInput = z.infer<typeof createUserSchema>
 
@@ -53,9 +53,11 @@ async function setAssignments(db: Db, userId: string, role: Role, ids: readonly 
   await db`delete from iot.user_greenhouses where user_id = ${userId}`
   // Solo los operadores tienen alcance limitado; para el resto no se guardan asignaciones.
   if (role !== 'operator' || ids.length === 0) return
+  // Solo invernaderos activos: uno dado de baja no se puede asignar (ni aparece en la lista de opciones).
   await db`
     insert into iot.user_greenhouses (user_id, greenhouse_id)
-    select ${userId}, g.id from iot.greenhouses g where g.id = any(${db.array([...ids], 21)}::smallint[])`
+    select ${userId}, g.id from iot.greenhouses g
+     where g.id = any(${db.array([...ids], 21)}::smallint[]) and g.archived_at is null`
 }
 
 /** Crea una cuenta con una contraseña inicial aleatoria que se muestra UNA sola vez y debe cambiarse. */

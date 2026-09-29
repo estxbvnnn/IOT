@@ -1,5 +1,7 @@
 /**
- * Simulador de los diez nodos de invernadero + el nodo del mástil (anemómetro).
+ * Simulador de los nodos de invernadero (los que haya en .demo-devices.json) + el nodo del mástil (anemómetro).
+ * La cantidad de invernaderos no es fija: un invernadero creado desde el panel se simula con
+ * `--add CODIGO=TOKEN` (el token se muestra una sola vez al crearlo).
  *
  * Cada nodo simulado se comporta como el firmware del ESP32: muestrea sensores (modelo físico), decide
  * el riego con el MISMO controlador autónomo (histéresis, espera entre riegos, corte por tiempo, bloqueo
@@ -14,6 +16,7 @@
  *   npm run simulate -- --fast              → fija «reporte del nodo» en 15 s mientras corre (alertas de
  *                                             nodo caído en ~90 s) y lo restaura al salir
  *   npm run simulate -- --only I1,I3 --url http://192.168.1.20:3000
+ *   npm run simulate -- --only I11 --add I11=<token>   → simula un invernadero creado desde el panel
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -288,8 +291,15 @@ async function setFastInterval(seconds: number | null): Promise<void> {
 // ---------------------------------------------------------------- principal
 async function main(): Promise<void> {
   const file = path.join(DASHBOARD_DIR, '.demo-devices.json')
-  if (!fs.existsSync(file)) throw new Error('Falta .demo-devices.json: ejecuta «npm run db:seed» primero (guarda los tokens de los nodos).')
-  const tokens = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>
+  const tokens: Record<string, string> = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>) : {}
+  // --add CODIGO=TOKEN[,CODIGO=TOKEN…]: nodos de invernaderos creados desde el panel (no están en el archivo).
+  for (const pair of arg('--add', '').split(',').map((s) => s.trim()).filter(Boolean)) {
+    const i = pair.indexOf('=')
+    if (i > 0 && i < pair.length - 1) tokens[pair.slice(0, i).trim()] = pair.slice(i + 1).trim()
+  }
+  if (Object.keys(tokens).length === 0) {
+    throw new Error('No hay tokens de nodos: ejecuta «npm run db:seed» (los guarda en .demo-devices.json) o pásalos con --add CODIGO=TOKEN.')
+  }
 
   const health = await fetch(`${BASE_URL}/api/health`, { signal: AbortSignal.timeout(8000) }).catch(() => null)
   if (!health?.ok) throw new Error(`El dashboard no responde en ${BASE_URL}. Inícialo con «npm run dev» (o usa --url).`)

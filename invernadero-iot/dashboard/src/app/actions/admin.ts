@@ -54,7 +54,7 @@ export async function resetUserMfaAction(userId: string): Promise<ActionResult> 
 
 export async function updateUserAccessAction(userId: string, input: { role: Role; greenhouseIds: number[] }): Promise<ActionResult> {
   const admin = await requireUser()
-  const p = z.object({ role: z.enum(ROLES), greenhouseIds: z.array(z.number().int().min(1).max(99)).max(99) }).safeParse(input)
+  const p = z.object({ role: z.enum(ROLES), greenhouseIds: z.array(z.number().int().min(1).max(32767)).max(5000) }).safeParse(input)
   if (!uuid.safeParse(userId).success || !p.success) return fail('Datos inválidos.')
   const meta = await getRequestMeta()
   const res = await run(() => updateUserAccess(getDb(), admin, userId, p.data, meta.ip))

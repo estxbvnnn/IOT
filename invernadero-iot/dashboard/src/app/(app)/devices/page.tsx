@@ -35,7 +35,7 @@ export default async function DevicesPage() {
         {!canManage && <Chip tone="off" icon={Info}>Solo lectura</Chip>}
       </div>
 
-      <Card flush title="Nodos del predio" description="Diez nodos ESP32 (uno por invernadero) y el nodo del mástil con el anemómetro.">
+      <Card flush title="Nodos del predio" description="Un nodo ESP32 por invernadero (la cantidad no es fija) y el nodo del mástil con el anemómetro.">
         <DevicesTable devices={devices} canManage={canManage} />
       </Card>
 

@@ -17,12 +17,12 @@ export async function listDevices(db: Db, actor: Actor, now = new Date()): Promi
   const since6 = new Date(now.getTime() - 6 * 3600_000)
   const [nodes, counts, spark] = await Promise.all([
     db<{
-      id: number; kind: 'greenhouse' | 'mast'; label: string; code: string | null; enabled: boolean; token_prefix: string
-      token_rotated_at: Date; fw_version: string | null; ts: Date | null; rssi: number | null; snr: number | null
-      uptime_s: number | null; faults: string[] | null; interval_s: number | null
+      id: number; kind: 'greenhouse' | 'mast'; label: string; code: string | null; gh_archived: boolean; enabled: boolean
+      token_prefix: string; token_rotated_at: Date; fw_version: string | null; ts: Date | null; rssi: number | null
+      snr: number | null; uptime_s: number | null; faults: string[] | null; interval_s: number | null
     }[]>`
-      select n.id, n.kind, n.label, g.code, n.enabled, n.token_prefix, n.token_rotated_at,
-             s.fw_version, s.ts, s.rssi, s.snr, s.uptime_s, s.faults, t.interval_s
+      select n.id, n.kind, n.label, g.code, (g.archived_at is not null) as gh_archived, n.enabled, n.token_prefix,
+             n.token_rotated_at, s.fw_version, s.ts, s.rssi, s.snr, s.uptime_s, s.faults, t.interval_s
         from iot.nodes n
         left join iot.greenhouses g on g.id = n.greenhouse_id
         left join iot.node_state s on s.node_id = n.id
@@ -50,7 +50,7 @@ export async function listDevices(db: Db, actor: Actor, now = new Date()): Promi
     const frames24h = countBy.get(n.id) ?? 0
     const buckets = sparkBy.get(n.id)
     return {
-      id: n.id, kind: n.kind, label: n.label, greenhouseCode: n.code, enabled: n.enabled,
+      id: n.id, kind: n.kind, label: n.label, greenhouseCode: n.code, greenhouseArchived: n.gh_archived, enabled: n.enabled,
       tokenPrefix: n.token_prefix, tokenRotatedAt: n.token_rotated_at.toISOString(), fw: n.fw_version,
       lastSeen: n.ts?.toISOString() ?? null, ageS, online: ageS !== null && ageS <= offlineAfterS(intervalS),
       rssi: n.rssi, snr: n.snr, uptimeS: n.uptime_s, faults: n.faults ?? [], intervalS, frames24h, expected24h,
@@ -67,19 +67,26 @@ export interface NewNodeInput {
 }
 
 /**
- * Da de alta un nodo y devuelve su token (única vez que existe en claro).
- * Lo usa el seed con la conexión de administración; no se expone en la interfaz.
+ * Inserta el nodo y su fila de estado (una sola sentencia) y devuelve su token: es la ÚNICA vez que existe
+ * en claro, la base solo guarda su SHA-256. Debe llamarse dentro de una transacción.
  */
-export async function createNode(db: Db, input: NewNodeInput): Promise<{ id: number; token: string }> {
+export async function insertNode(tx: Db, input: NewNodeInput): Promise<{ id: number; token: string }> {
   const token = generateToken(32)
-  return inTransaction(db, async (tx) => {
-    const [row] = await tx<{ id: number }[]>`
+  const [row] = await tx<{ id: number }[]>`
+    with n as (
       insert into iot.nodes (kind, greenhouse_id, label, token_hash, token_prefix)
       values (${input.kind}, ${input.greenhouseId}, ${input.label}, ${hashToken(token)}, ${token.slice(0, 6)})
-      returning id`
-    await tx`insert into iot.node_state (node_id) values (${row!.id})`
-    return { id: row!.id, token }
-  })
+      returning id)
+    insert into iot.node_state (node_id) select id from n returning node_id as id`
+  return { id: row!.id, token }
+}
+
+/**
+ * Da de alta un nodo suelto y devuelve su token. Lo usa el seed con la conexión de administración; los
+ * invernaderos nuevos crean su nodo desde `createGreenhouse` (services/greenhouses.ts).
+ */
+export async function createNode(db: Db, input: NewNodeInput): Promise<{ id: number; token: string }> {
+  return inTransaction(db, (tx) => insertNode(tx, input))
 }
 
 /** Rota la credencial de un nodo: el token anterior deja de funcionar de inmediato. */
@@ -99,6 +106,13 @@ export async function rotateNodeToken(db: Db, actor: Actor, nodeId: number, ip: 
 
 export async function setNodeEnabled(db: Db, actor: Actor, nodeId: number, enabled: boolean, ip: string | null = null): Promise<void> {
   assertCan(actor, 'devices:manage')
+  if (enabled) {
+    // Un invernadero dado de baja no recibe datos: hay que reactivarlo primero (eso habilita su nodo).
+    const [n] = await db<{ archived: boolean }[]>`
+      select (g.archived_at is not null) as archived
+        from iot.nodes n left join iot.greenhouses g on g.id = n.greenhouse_id where n.id = ${nodeId}`
+    if (n?.archived) throw new ValidationError({}, 'El invernadero de este nodo está dado de baja: reactívalo primero en «Invernaderos».')
+  }
   const rows = await db<{ label: string }[]>`update iot.nodes set enabled = ${enabled} where id = ${nodeId} returning label`
   if (rows.length === 0) throw new ValidationError({}, 'Nodo no encontrado.')
   await audit(db, {

@@ -217,6 +217,10 @@ punto débil del diseño; un sensor capacitivo es la ampliación natural.
 Versiones con las que se verificó la compilación: **core esp32 (Arduino-ESP32) 3.3.12**, **DHT sensor library 1.4.7**,
 **Adafruit Unified Sensor 1.1.15**, **ArduinoJson 7.4.3**.
 
+> **Atajo para Arduino IDE:** `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` es este mismo firmware en **un solo
+> archivo** (no usa `secrets.h`: WiFi, servidor y token se escriben en su bloque «CONFIGURACION DEL USUARIO»). Con él, los pasos
+> 4 y 6 de abajo se reducen a abrir ese archivo y editar ese bloque. Se genera desde `nodo_invernadero/` con `npm run firmware:unico`.
+
 ### Arduino IDE 2.x
 
 1. *Archivo → Preferencias → URLs adicionales del gestor de tarjetas:*
@@ -249,7 +253,7 @@ Opciones del firmware desde la línea de comandos (sin editar `config.h`), por e
 
 ## `secrets.h`
 
-Copie `secrets.example.h` con el nombre `secrets.h` (misma carpeta). **Está en `.gitignore`: no se sube a Git.**
+Copie `secrets.example.h` con el nombre `secrets.h` (misma carpeta). **Lleva sus claves (WiFi y token): si sube el proyecto a Git, hágalo solo a un repositorio privado.** (Con el archivo único no existe `secrets.h`: esos valores van en su bloque «CONFIGURACION DEL USUARIO».)
 
 | Constante | Qué poner |
 |---|---|

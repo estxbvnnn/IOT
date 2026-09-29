@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { PowerOff, TriangleAlert, Wifi, WifiOff } from 'lucide-react'
+import { Archive, PowerOff, TriangleAlert, Wifi, WifiOff } from 'lucide-react'
 import { Chip } from '@/components/ui/status'
 import { Sparkline } from '@/components/ui/sparkline'
 import type { DeviceDTO } from '@/lib/domain/types'
@@ -48,7 +48,9 @@ export function DevicesTable({ devices, canManage }: { devices: DeviceDTO[]; can
                 <td className="whitespace-nowrap">
                   <div className="font-semibold text-ink">{d.label}</div>
                   <div className="text-[12px] text-ink-3">
-                    {d.greenhouseCode ? (
+                    {d.greenhouseCode && d.greenhouseArchived ? (
+                      <span>{d.greenhouseCode} (dado de baja)</span>
+                    ) : d.greenhouseCode ? (
                       <Link href={`/greenhouses/${d.greenhouseCode}`} className="underline decoration-line-strong underline-offset-2 hover:decoration-accent">{d.greenhouseCode}</Link>
                     ) : (
                       'Predio (viento)'
@@ -57,7 +59,9 @@ export function DevicesTable({ devices, canManage }: { devices: DeviceDTO[]; can
                   </div>
                 </td>
                 <td className="whitespace-nowrap">
-                  {!d.enabled ? (
+                  {d.greenhouseArchived ? (
+                    <Chip tone="off" icon={Archive}>Invernadero dado de baja</Chip>
+                  ) : !d.enabled ? (
                     <Chip tone="off" icon={PowerOff}>Deshabilitado</Chip>
                   ) : d.online ? (
                     <Chip tone="good" icon={Wifi}>En línea</Chip>
@@ -109,7 +113,7 @@ export function DevicesTable({ devices, canManage }: { devices: DeviceDTO[]; can
                 </td>
                 {canManage && (
                   <td className="text-right">
-                    <DeviceActions nodeId={d.id} label={d.label} enabled={d.enabled} />
+                    <DeviceActions nodeId={d.id} label={d.label} enabled={d.enabled} archived={d.greenhouseArchived} />
                   </td>
                 )}
               </tr>

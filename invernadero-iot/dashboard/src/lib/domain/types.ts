@@ -100,6 +100,8 @@ export interface SiteOverview {
   widthM: number
   heightM: number
   substation: { x: number; y: number }
+  /** Estanque de agua (opcional): null = el predio no tiene o no se dibuja. */
+  tank: { x: number; y: number } | null
   generatedAt: string
   greenhouses: GreenhouseSummary[]
   wind: WindSummary
@@ -165,11 +167,40 @@ export interface SeriesBundle {
   events: IrrigationEventDTO[]
 }
 
+/** Invernadero tal como lo administra el administrador (activos y dados de baja). */
+export interface ManagedGreenhouseDTO {
+  id: number
+  code: string
+  name: string
+  crop: string | null
+  /** Centro del invernadero en el predio (m), con origen en la esquina superior izquierda. */
+  x: number
+  y: number
+  areaM2: number | null
+  flowLph: number
+  archived: boolean
+  archivedAt: string | null
+  createdAt: string
+  /** Nodo ESP32 asociado (uno por invernadero); null si no tiene. */
+  node: { id: number; enabled: boolean; tokenPrefix: string; lastSeen: string | null } | null
+}
+
+/** Ajustes del predio que definen el mapa. */
+export interface SiteSettingsDTO {
+  siteName: string
+  widthM: number
+  heightM: number
+  substation: { x: number; y: number }
+  tank: { x: number; y: number } | null
+}
+
 export interface DeviceDTO {
   id: number
   kind: 'greenhouse' | 'mast'
   label: string
   greenhouseCode: string | null
+  /** El invernadero del nodo está dado de baja (el nodo no puede reactivarse sin reactivar el invernadero). */
+  greenhouseArchived: boolean
   enabled: boolean
   tokenPrefix: string
   tokenRotatedAt: string

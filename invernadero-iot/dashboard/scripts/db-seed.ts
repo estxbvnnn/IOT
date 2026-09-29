@@ -1,13 +1,18 @@
 /**
  * Datos iniciales del sistema (idempotente: puede ejecutarse varias veces).
  *
- *   npm run db:seed                  → configuración + usuarios demo + nodos (SIN datos simulados)
- *   npm run db:seed -- --history 48  → además 48 h de historial sintético, solo para demostraciones
+ *   npm run db:seed                    → configuración + usuarios demo + nodos (SIN datos simulados)
+ *   npm run db:seed -- --history 48    → además 48 h de historial sintético, solo para demostraciones
+ *   npm run db:seed -- --greenhouses 3 → solo los 3 primeros invernaderos del informe (0 = ninguno)
+ *
+ * La cantidad de invernaderos NO es fija: el administrador los suma, edita y da de baja desde el panel
+ * («Invernaderos»). Este script solo arma el predio de ejemplo del informe cuando la base está vacía.
  *
  * Crea (solo lo que falte, nunca pisa datos existentes):
- *   - El predio: 10 invernaderos en las posiciones de la figura 2 del informe + el mástil central.
- *   - Umbrales por defecto (bandas del YL-38 de la imagen: 300 / 500 / 700).
- *   - Un nodo por invernadero + el nodo del mástil, con token propio (se guardan en .demo-devices.json).
+ *   - El predio de ejemplo: hasta 10 invernaderos en las posiciones de la figura 2 del informe (solo si la base
+ *     no tiene ninguno, o los que pida --greenhouses) + el mástil central.
+ *   - Umbrales por defecto (bandas del YL-38 de la imagen: 300 / 500 / 700) para todo invernadero que no los tenga.
+ *   - Un nodo por invernadero activo + el nodo del mástil, con token propio (se guardan en .demo-devices.json).
  *   - Un usuario demo por rol, con contraseña aleatoria (se guardan en .demo-credentials.md).
  *   - Historial sintético (DEMOSTRATIVO), solo si se pide con --history N: por defecto NO se genera, para no mezclar
  *     datos simulados con los de los nodos reales.
@@ -69,24 +74,34 @@ async function main(): Promise<void> {
   const sql = adminDb(4)
   const summary: string[] = []
   try {
-    // 1) Predio y umbrales.
+    // 1) Predio y umbrales. Por defecto se arma el predio del informe (10 invernaderos) solo si la base no tiene
+    //    ninguno; con --greenhouses N se crean los N primeros (0 = ninguno: se crean desde el panel).
     await sql`insert into iot.site_settings (id) values (1) on conflict do nothing`
-    for (const g of GREENHOUSES) {
+    const [count] = await sql<{ n: number }[]>`select count(*)::int as n from iot.greenhouses`
+    const requested = arg('--greenhouses', '')
+    const want = requested === ''
+      ? (count!.n === 0 ? GREENHOUSES.length : 0)
+      : Math.max(0, Math.min(GREENHOUSES.length, Math.floor(Number(requested)) || 0))
+    for (const g of GREENHOUSES.slice(0, want)) {
       await sql`
         insert into iot.greenhouses (id, code, name, crop, x_m, y_m, area_m2)
         values (${g.id}, ${g.code}, ${`Invernadero ${g.id}`}, null, ${g.x}, ${g.y}, 200)
         on conflict (id) do nothing`
-      await sql`insert into iot.thresholds (greenhouse_id) values (${g.id}) on conflict do nothing`
     }
-    summary.push(`✓ predio: ${GREENHOUSES.length} invernaderos con umbrales por defecto (riego ≥ 700, apagar ≤ 500, saturado < 300)`)
+    // Todo invernadero (sembrado o creado a mano) necesita su fila de umbrales.
+    await sql`insert into iot.thresholds (greenhouse_id) select id from iot.greenhouses on conflict do nothing`
+    const [total] = await sql<{ n: number }[]>`select count(*)::int as n from iot.greenhouses where archived_at is null`
+    summary.push(`✓ predio: ${total!.n} ${total!.n === 1 ? 'invernadero activo' : 'invernaderos activos'} con umbrales (riego ≥ 700, apagar ≤ 500, saturado < 300); más se crean desde el panel «Invernaderos»`)
 
-    // 2) Nodos y tokens.
+    // 2) Nodos y tokens: uno por invernadero activo que aún no tenga (los que se crean desde el panel ya traen el suyo).
     const tokens = readJson<Record<string, string>>(devicesFile, {})
     const existing = await sql<{ greenhouse_id: number | null; kind: string; id: number }[]>`select id, kind, greenhouse_id from iot.nodes`
-    const haveGh = new Set(existing.filter((n) => n.greenhouse_id !== null).map((n) => n.greenhouse_id))
+    const withoutNode = await sql<{ id: number; code: string }[]>`
+      select g.id, g.code from iot.greenhouses g
+       where g.archived_at is null and not exists (select 1 from iot.nodes n where n.greenhouse_id = g.id)
+       order by g.id`
     let created = 0
-    for (const g of GREENHOUSES) {
-      if (haveGh.has(g.id)) continue
+    for (const g of withoutNode) {
       const n = await createNode(sql, { kind: 'greenhouse', greenhouseId: g.id, label: `Nodo ${g.code}` })
       tokens[g.code] = n.token
       created++
@@ -110,8 +125,12 @@ async function main(): Promise<void> {
       const [row] = await sql<{ id: string }[]>`
         insert into iot.app_users (email, name, role, password_hash)
         values (${u.email}, ${u.name}, ${u.role}, ${await hashPassword(password)}) returning id`
-      for (const gid of u.greenhouses ?? []) {
-        await sql`insert into iot.user_greenhouses (user_id, greenhouse_id) values (${row!.id}, ${gid})`
+      if (u.greenhouses && u.greenhouses.length > 0) {
+        // Solo los invernaderos que existen (la cantidad no es fija).
+        await sql`
+          insert into iot.user_greenhouses (user_id, greenhouse_id)
+          select ${row!.id}, g.id from iot.greenhouses g where g.id = any(${sql.array(u.greenhouses, 21)}::smallint[])
+          on conflict do nothing`
       }
       newCreds.push({ email: u.email, password, role: u.role })
     }

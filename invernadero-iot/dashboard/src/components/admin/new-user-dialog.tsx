@@ -75,7 +75,7 @@ export function NewUserButton({ greenhouses }: { greenhouses: readonly Greenhous
               <input id={`${id}-e`} type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" maxLength={254} required aria-invalid={!!errors.email} aria-describedby={errors.email ? `${id}-e-e` : undefined} />
               {errors.email && <p id={`${id}-e-e`} className="field-error">{errors.email}</p>}
             </div>
-            <AccessFields role={role} onRole={setRole} selected={ids} onToggle={(g) => setIds((s) => (s.includes(g) ? s.filter((x) => x !== g) : [...s, g]))} greenhouses={greenhouses} errors={errors} />
+            <AccessFields role={role} onRole={setRole} selected={ids} onToggle={(g) => setIds((s) => (s.includes(g) ? s.filter((x) => x !== g) : [...s, g]))} onSetAll={setIds} greenhouses={greenhouses} errors={errors} />
             {formError && <p role="alert" className="rounded-lg bg-crit-wash px-3 py-2 text-[13px] text-ink">{formError}</p>}
             <div className="flex justify-end gap-2">
               <button type="button" className="btn" onClick={close} disabled={pending}>Cancelar</button>

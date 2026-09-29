@@ -13,6 +13,7 @@ import { ThresholdsPanel } from '@/components/greenhouse/thresholds-panel'
 import { Card } from '@/components/ui/card'
 import { getDb } from '@/lib/db'
 import { requirePermission } from '@/lib/dal'
+import { GREENHOUSE_CODE_RE } from '@/lib/domain/greenhouse'
 import { RANGE_SPECS, type RangeKey, isRangeKey } from '@/lib/domain/types'
 import { can, canOnGreenhouse } from '@/lib/rbac'
 import { listCommands } from '@/lib/services/commands'
@@ -26,7 +27,7 @@ interface Props {
 
 export async function generateMetadata({ params }: Pick<Props, 'params'>): Promise<Metadata> {
   const { code } = await params
-  return { title: /^I\d{1,2}$/.test(code) ? `Invernadero ${code}` : 'Invernadero' }
+  return { title: GREENHOUSE_CODE_RE.test(code) ? `Invernadero ${code}` : 'Invernadero' }
 }
 
 /**

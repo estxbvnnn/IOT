@@ -15,7 +15,8 @@ export const metadata: Metadata = { title: 'Usuarios' }
 export default async function UsersPage() {
   const admin = await requirePermission('users:manage')
   const db = getDb()
-  const [users, greenhouses] = await Promise.all([listUsers(db, admin), listGreenhouseOptions(db, admin)])
+  // Se incluyen los dados de baja solo para mostrar el código de asignaciones antiguas; el selector no los ofrece.
+  const [users, greenhouses] = await Promise.all([listUsers(db, admin), listGreenhouseOptions(db, admin, { includeArchived: true })])
   const active = users.filter((u) => u.isActive).length
 
   return (

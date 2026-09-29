@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { Sprout } from 'lucide-react'
 import { AutoRefresh } from '@/components/ui/auto-refresh'
 import { Card, EmptyState } from '@/components/ui/card'
@@ -29,6 +30,7 @@ export default async function OverviewPage() {
   const overview = await getSiteOverview(getDb(), user)
   const canViewAlerts = can(user.role, 'alerts:view')
   const linkable = can(user.role, 'greenhouse:view')
+  const canManage = can(user.role, 'greenhouses:manage')
   const empty = overview.greenhouses.length === 0
 
   return (
@@ -45,9 +47,15 @@ export default async function OverviewPage() {
 
       {empty ? (
         <Card>
-          <EmptyState icon={Sprout} title="Sin sectores asignados">
-            Tu cuenta todavía no tiene invernaderos asignados. Pide al administrador que te asigne uno o más sectores para ver su estado y operar el riego.
-          </EmptyState>
+          {canManage ? (
+            <EmptyState icon={Sprout} title="Todavía no hay invernaderos">
+              Crea el primero en <Link href="/greenhouses" className="font-semibold text-ink underline underline-offset-2">Invernaderos</Link>: se genera junto con su nodo y sus umbrales de riego.
+            </EmptyState>
+          ) : (
+            <EmptyState icon={Sprout} title="Sin invernaderos para mostrar">
+              Tu cuenta todavía no tiene invernaderos asignados (o el predio aún no tiene ninguno). Pide al administrador que te asigne uno o más sectores para ver su estado y operar el riego.
+            </EmptyState>
+          )}
         </Card>
       ) : (
         <>
@@ -67,6 +75,7 @@ export default async function OverviewPage() {
                   widthM={overview.widthM}
                   heightM={overview.heightM}
                   substation={overview.substation}
+                  tank={overview.tank}
                   linkable={linkable}
                   describedBy={MAP_HELP_ID}
                 />

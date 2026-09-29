@@ -10,6 +10,19 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { REPO_DIR, adminDb, appDb, loadEnvFiles, requireEnv, sqlLiteral } from './lib/scriptenv'
 
+/** ¿Puede la aplicación iniciar sesión hoy con la contraseña de .env.local? */
+async function appLoginWorks(): Promise<boolean> {
+  const app = appDb(1)
+  try {
+    await app`select 1`
+    return true
+  } catch {
+    return false
+  } finally {
+    await app.end({ timeout: 5 }).catch(() => undefined)
+  }
+}
+
 async function main(): Promise<void> {
   loadEnvFiles('.env.local', '.env.admin.local')
   const sql = adminDb()
@@ -40,10 +53,16 @@ async function main(): Promise<void> {
       console.log(`✓ ${f}`)
     }
 
-    // Habilita el login del rol de la aplicación con la clave de .env.local.
+    // Habilita el login del rol de la aplicación con la clave de .env.local. Solo si hace falta: cada ALTER ROLE
+    // genera un verificador nuevo y el pooler de Supabase tarda unos segundos en olvidar el anterior (mientras
+    // tanto la aplicación puede fallar al conectar), así que no se repite si el rol ya funciona.
     const password = requireEnv('DATABASE_PASSWORD')
-    await sql.unsafe(`alter role iot_app with login password ${sqlLiteral(password)}`)
-    console.log('✓ rol iot_app habilitado con la contraseña de .env.local')
+    if (await appLoginWorks()) {
+      console.log('= rol iot_app: ya inicia sesión con la contraseña de .env.local (no se modifica)')
+    } else {
+      await sql.unsafe(`alter role iot_app with login password ${sqlLiteral(password)}`)
+      console.log('✓ rol iot_app habilitado con la contraseña de .env.local')
+    }
   } finally {
     await sql.end({ timeout: 5 })
   }

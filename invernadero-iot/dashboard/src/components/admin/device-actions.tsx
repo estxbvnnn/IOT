@@ -10,15 +10,17 @@ interface Props {
   nodeId: number
   label: string
   enabled: boolean
+  /** El invernadero del nodo está dado de baja: el nodo solo se habilita reactivando el invernadero. */
+  archived?: boolean
 }
 
 type Modal = null | 'rotate' | 'disable'
 
 /**
  * Acciones del administrador sobre un nodo. Rotar el token invalida el anterior al instante: el nodo deja de
- * reportar hasta que se pegue el token nuevo en `secrets.h` del firmware y se reinicie.
+ * reportar hasta que se pegue el token nuevo en `DEVICE_TOKEN` del firmware, se vuelva a cargar y se reinicie.
  */
-export function DeviceActions({ nodeId, label, enabled }: Props) {
+export function DeviceActions({ nodeId, label, enabled, archived = false }: Props) {
   const [modal, setModal] = useState<Modal>(null)
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -52,7 +54,9 @@ export function DeviceActions({ nodeId, label, enabled }: Props) {
       <button type="button" className="btn btn-sm" onClick={() => setModal('rotate')} aria-label={`Rotar token de ${label}`}>
         <KeyRound size={14} aria-hidden /> Rotar token
       </button>
-      {enabled ? (
+      {archived ? (
+        <span className="self-center text-[12px] text-ink-3">Reactiva el invernadero para habilitarlo</span>
+      ) : enabled ? (
         <button type="button" className="btn btn-sm" onClick={() => setModal('disable')} aria-label={`Deshabilitar ${label}`}>
           <PowerOff size={14} aria-hidden /> Deshabilitar
         </button>
@@ -75,7 +79,7 @@ export function DeviceActions({ nodeId, label, enabled }: Props) {
             <SecretReveal
               label={`Token de ${label}`}
               value={token.token}
-              warning="Se muestra una sola vez y el servidor solo guarda su huella (SHA-256). Pégalo en DEVICE_TOKEN de secrets.h, vuelve a cargar el firmware y reinicia el nodo. El token anterior ya no sirve."
+              warning="Se muestra una sola vez y el servidor solo guarda su huella (SHA-256). Pégalo en DEVICE_TOKEN del firmware, vuelve a cargarlo en la placa y reinicia el nodo. El token anterior ya no sirve."
             />
             <div className="flex justify-end">
               <button type="button" className="btn btn-primary" onClick={close}>Listo, ya lo copié</button>
