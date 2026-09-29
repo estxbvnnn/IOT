@@ -1,0 +1,409 @@
+@import 'tailwindcss';
+
+/* El tema se elige con data-theme="light|dark" (botón) o, si no hay elección, con el sistema operativo. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* =====================================================================
+   TOKENS DE DISEÑO
+   Paleta: referencia validada de la guía de visualización de datos (categórica de 8 tonos con orden fijo,
+   estado good/warning/serious/critical, rampa secuencial azul, par divergente azul↔rojo).
+   Regla: los colores de estado NO se reutilizan como series; siempre llevan ícono + texto.
+   ===================================================================== */
+:root {
+  color-scheme: light;
+
+  /* Superficies y tinta */
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #6b6a65; /* leyendas y subtítulos: ≥ 5:1 sobre la superficie */
+  --muted: #898781; /* solo ejes y etiquetas de gráficos */
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgb(11 11 11 / 0.1);
+  --border-strong: rgb(11 11 11 / 0.22);
+
+  /* Interacción (azul = ranura 1 de la paleta) */
+  --accent: #2a78d6;
+  --accent-btn: #256abf;
+  --accent-ink: #ffffff;
+  --accent-wash: rgb(42 120 214 / 0.1);
+  --focus: #2a78d6;
+
+  /* Estado (fijo, nunca cambia con el tema) */
+  --good: #0ca30c;
+  --warn: #fab219;
+  --serious: #ec835a;
+  --crit: #d03b3b;
+  --good-ink: #006300; /* texto de éxito */
+  --warn-ink: #7a5200;
+  --crit-ink: #a12525;
+  --good-wash: rgb(12 163 12 / 0.11);
+  --warn-wash: rgb(250 178 25 / 0.2);
+  --serious-wash: rgb(236 131 90 / 0.16);
+  --crit-wash: rgb(208 59 59 / 0.11);
+  --off-wash: rgb(11 11 11 / 0.07);
+
+  /* Categórica (orden fijo): azul, naranja, aqua, amarillo, magenta, verde, violeta, rojo */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
+  --s7: #4a3aa7;
+  --s8: #e34948;
+
+  /* Secuencial azul (100 → 700) y divergente (azul ↔ neutro ↔ rojo) para las bandas del suelo */
+  --seq-100: #cde2fb;
+  --seq-250: #86b6ef;
+  --seq-550: #1c5cab;
+  --div-mid: #f0efec;
+
+  /* Bandas del sensor de suelo (fondo de gráficos: lavados muy suaves) */
+  --band-saturado: rgb(42 120 214 / 0.13);
+  --band-optimo: rgb(12 163 12 / 0.1);
+  --band-seco: rgb(236 131 90 / 0.16);
+
+  --shadow: 0 1px 2px rgb(11 11 11 / 0.05), 0 4px 16px rgb(11 11 11 / 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #a3a29a;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgb(255 255 255 / 0.1);
+    --border-strong: rgb(255 255 255 / 0.24);
+    --accent: #3987e5;
+    --accent-btn: #2a78d6;
+    --accent-wash: rgb(57 135 229 / 0.16);
+    --focus: #6da7ec;
+    --good-ink: #0ca30c;
+    --warn-ink: #fab219;
+    --crit-ink: #f08080;
+    --off-wash: rgb(255 255 255 / 0.08);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #c98500;
+    --s5: #d55181;
+    --s6: #008300;
+    --s7: #9085e9;
+    --s8: #e66767;
+    --seq-100: #104281;
+    --seq-250: #256abf;
+    --div-mid: #383835;
+    --band-saturado: rgb(57 135 229 / 0.2);
+    --band-optimo: rgb(12 163 12 / 0.13);
+    --band-seco: rgb(236 131 90 / 0.18);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #a3a29a;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --baseline: #383835;
+  --border: rgb(255 255 255 / 0.1);
+  --border-strong: rgb(255 255 255 / 0.24);
+  --accent: #3987e5;
+  --accent-btn: #2a78d6;
+  --accent-wash: rgb(57 135 229 / 0.16);
+  --focus: #6da7ec;
+  --good-ink: #0ca30c;
+  --warn-ink: #fab219;
+  --crit-ink: #f08080;
+  --off-wash: rgb(255 255 255 / 0.08);
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+  --s5: #d55181;
+  --s6: #008300;
+  --s7: #9085e9;
+  --s8: #e66767;
+  --seq-100: #104281;
+  --seq-250: #256abf;
+  --div-mid: #383835;
+  --band-saturado: rgb(57 135 229 / 0.2);
+  --band-optimo: rgb(12 163 12 / 0.13);
+  --band-seco: rgb(236 131 90 / 0.18);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+/* Tokens → utilidades de Tailwind (bg-surface, text-ink-2, border-line…) */
+@theme inline {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-muted: var(--muted);
+  --color-grid: var(--grid);
+  --color-baseline: var(--baseline);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-btn: var(--accent-btn);
+  --color-accent-wash: var(--accent-wash);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-serious: var(--serious);
+  --color-crit: var(--crit);
+  --color-good-ink: var(--good-ink);
+  --color-warn-ink: var(--warn-ink);
+  --color-crit-ink: var(--crit-ink);
+  --color-good-wash: var(--good-wash);
+  --color-warn-wash: var(--warn-wash);
+  --color-serious-wash: var(--serious-wash);
+  --color-crit-wash: var(--crit-wash);
+  --color-off-wash: var(--off-wash);
+  --color-s1: var(--s1);
+  --color-s2: var(--s2);
+  --color-s3: var(--s3);
+  --color-s4: var(--s4);
+  --color-s7: var(--s7);
+}
+
+/* =====================================================================
+   BASE
+   ===================================================================== */
+@layer base {
+  html {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    min-height: 100dvh;
+    background: var(--page);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: var(--accent-wash);
+  }
+  /* Los números grandes usan cifras proporcionales; solo las columnas alinean con tabular-nums. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* =====================================================================
+   COMPONENTES
+   ===================================================================== */
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  .card-pad {
+    padding: 16px 18px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 9px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s, opacity 0.12s;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--accent-btn);
+    border-color: transparent;
+    color: var(--accent-ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-btn);
+    filter: brightness(1.08);
+  }
+  .btn-danger {
+    background: var(--crit);
+    border-color: transparent;
+    color: #fff;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--crit);
+    filter: brightness(1.08);
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-2);
+  }
+  .btn-sm {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
+    border-radius: 8px;
+  }
+
+  .input {
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 11px;
+    border-radius: 9px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 14px;
+  }
+  .input::placeholder {
+    color: var(--ink-3);
+  }
+  .input:focus-visible {
+    outline-offset: 0;
+    border-color: var(--focus);
+  }
+  .input[aria-invalid='true'] {
+    border-color: var(--crit);
+  }
+  .label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+  .hint {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .field-error {
+    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--crit-ink);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 9px 0 7px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .tbl {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+  .tbl th {
+    position: sticky;
+    top: 0;
+    padding: 9px 12px;
+    text-align: left;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ink-3);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  .tbl td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .tbl tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .tbl tbody tr:hover td {
+    background: var(--surface-2);
+  }
+
+  .eyebrow {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+}
+
+/* Pulso suave para «bomba regando» */
+@keyframes pump-pulse {
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+.pump-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pump-pulse 1.6s ease-out infinite;
+}
+
+/* Datos que se recargan: se mantiene lo anterior, atenuado, sin saltos ni esqueletos */
+[data-stale='true'] {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(2px);
+}
+dialog {
+  color: var(--ink);
+}

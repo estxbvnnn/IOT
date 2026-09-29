@@ -1,0 +1,51 @@
+{
+  "name": "invernadero-iot-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dashboard IoT para el monitoreo y riego automático de 10 invernaderos (INACAP · Seguridad IoT).",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "dev:lan": "next dev -H 0.0.0.0",
+    "build": "next build",
+    "start": "next start",
+    "start:lan": "next start -H 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.mts",
+    "setup": "npm run setup:env && npm run db:migrate && npm run db:seed",
+    "setup:env": "tsx scripts/setup-env.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:seed": "tsx scripts/db-seed.ts",
+    "db:retention": "tsx scripts/db-retention.ts",
+    "db:reset-data": "tsx scripts/db-reset-data.ts",
+    "simulate": "tsx scripts/simulate.ts",
+    "demo": "tsx scripts/simulate.ts --scenario demo --fast --speed 120"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.48.0",
+    "next": "16.3.6",
+    "postgres": "^3.4.9",
+    "qrcode": "^1.5.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "playwright-core": "^1.63.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "^5.0.2"
+  }
+}

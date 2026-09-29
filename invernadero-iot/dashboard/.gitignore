@@ -1,0 +1,19 @@
+# dependencias y compilación
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# secretos: NUNCA se suben al repositorio
+.env
+.env.*
+!.env.example
+.demo-credentials.md
+.demo-devices.json
+
+# artefactos locales
+npm-debug.log*
+.DS_Store
+Thumbs.db
