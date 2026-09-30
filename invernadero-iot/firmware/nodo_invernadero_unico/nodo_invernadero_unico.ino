@@ -1,71 +1,72 @@
 /* =====================================================================
-   NODO DEL INVERNADERO  -  monitoreo y riego automatico (ESP32)
-   ARCHIVO UNICO PARA ARDUINO IDE  -  firmware 1.0.0
+   NODO DEL INVERNADERO  -  monitoreo y riego automatico (ESP8266)
+   ARCHIVO UNICO PARA ARDUINO IDE  -  firmware 1.0.0-esp8266
    DHT22 + YL-38/YL-69 + bomba de agua por rele  ->  dashboard (Supabase)
+   Placas: NodeMCU 1.0 (ESP-12E), Wemos/LOLIN D1 mini y clones con ESP8266.
 
-   TODO el firmware esta en ESTE archivo: no necesita secrets.h ni ningun otro
-   archivo. Puede copiarlo solo, a cualquier carpeta de sketches.
+   TODO el firmware esta en ESTE archivo: no necesita ningun otro archivo. Puede
+   copiarlo solo, a cualquier carpeta de sketches.
 
    PASOS (Arduino IDE 1.8 o 2.x)
-   1) Placa ESP32 (una sola vez):
+   1) Placa ESP8266 (una sola vez):
         Archivo > Preferencias > "URLs adicionales del gestor de tarjetas":
-          https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          https://arduino.esp8266.com/stable/package_esp8266com_index.json
         Herramientas > Placa > Gestor de tarjetas > instalar
-          "esp32 by Espressif Systems"  (la version modular se compilo con la 3.3.12)
+          "esp8266 by ESP8266 Community"  (compilado con la version 3.1.2)
    2) Bibliotecas (una sola vez): Herramientas > Administrar bibliotecas
           "DHT sensor library" y "Adafruit Unified Sensor"  (Adafruit)
           "ArduinoJson"  (Benoit Blanchon), version 7.x
    3) Edite SOLO el bloque "CONFIGURACION DEL USUARIO" (mas abajo):
         WIFI_SSID, WIFI_PASS, SERVER_URL y DEVICE_TOKEN.
-   4) Herramientas > Placa: "ESP32 Dev Module" (mapa de pines de la ESP32 DevKit V1,
-      tabla 18 del informe) o "Heltec WiFi LoRa 32(V2)" (mapa alternativo: se
-      detecta solo). Elija el Puerto, pulse Subir y abra el Monitor Serie a 115200.
+   4) Herramientas > Placa: "NodeMCU 1.0 (ESP-12E Module)" o
+      "LOLIN(WEMOS) D1 R2 & mini". Elija el Puerto, pulse Subir y abra el
+      Monitor Serie a 115200.
+   5) Conexiones (D5 = GPIO14, D6 = GPIO12, D7 = GPIO13): en la SECCION 2 (config.h).
 
    TENGA EN CUENTA
    - SERVER_URL debe ser la IP del PC en la red local (ej.: http://192.168.1.50:3000),
      con el dashboard iniciado con "npm run dev:lan" y el puerto 3000 permitido en el
-     Firewall de Windows. "localhost" NO sirve: para el ESP32 "localhost" es el propio
-     ESP32.
-   - Solo para placas ESP32. No sirve en Arduino UNO, Nano ni Mega.
+     Firewall de Windows. "localhost" NO sirve: para la placa "localhost" es ella misma.
+   - Solo para placas ESP8266. Para ESP32 use nodo_invernadero_unico_esp32.ino.
+     No sirve en Arduino UNO, Nano ni Mega.
+   - El ESP8266 tiene UN solo nucleo y UNA sola entrada analogica (A0): la usa el suelo
+     (YL-38) o, en el nodo del mastil, el anemometro; nunca los dos en la misma placa.
+   - Como un POST HTTP bloquea el bucle unos segundos, el nodo NUNCA hace red mientras la
+     bomba esta encendida: los eventos quedan en cola y salen al apagarse. El corte de
+     la bomba por tiempo se evalua en cada vuelta (~10 ms).
+   - HTTPS usa mucha memoria del ESP8266: para las pruebas use http:// en la red local.
    - Sin WiFi ni servidor (o con los valores de ejemplo) el nodo igual riega de forma
      autonoma y muestra el estado por el Monitor Serie.
    - Con sus claves reales (WiFi, token) este archivo es sensible: si lo sube a Git,
      que sea a un repositorio PRIVADO.
 
    ESTE ARCHIVO ESTA GENERADO
-   Nace de los archivos de firmware/nodo_invernadero (la fuente, con pruebas de host).
-   Si va a cambiar la logica, edite esos archivos y vuelva a generar este con
+   Nace de firmware/nodo_invernadero_esp8266 (lo propio del ESP8266: config, sensores,
+   red y programa principal) y de riego.h, envio.h y protocolo.h de
+   firmware/nodo_invernadero (la misma logica del ESP32, con pruebas de host).
+   Si va a cambiar algo, edite esos archivos y vuelva a generar este con
         npm run firmware:unico        (desde la carpeta raiz del proyecto)
-   Diferencias con la version modular: la configuracion esta arriba (no hay
-   secrets.h), 2 mensajes de consola y 3 comentarios que nombraban secrets.h, y
-   el #error de placa no soportada.
 
-   ORDEN DEL ARCHIVO (cada seccion viene del archivo modular indicado)
+   ORDEN DEL ARCHIVO
      1. Configuracion del usuario (WiFi, servidor, token, opciones)
-     2. config.h      pines (2 mapas), tiempos, opciones
+     2. config.h      pines, tiempos, opciones (ESP8266)
      3. riego.h       reglas del riego (logica pura, probada en el PC)
      4. envio.h       cuando enviar y reintentar tramas (logica pura, probada en el PC)
      5. protocolo.h   JSON de la trama y de la respuesta (docs/contrato-api.md)
-     6. sensores.h    DHT22, YL-38, BH1750, anemometro y rele
-     7. red.h         WiFi + HTTP(S) en una tarea aparte (nucleo 0)
-     8. nodo_invernadero.ino   setup() y loop(): une todo
-
-   REGLA DE ORO: loop() NUNCA espera a la red. El corte de la bomba por tiempo se
-   evalua en cada vuelta (cada ~10 ms).
+     6. sensores.h    DHT22, YL-38, BH1750, anemometro y rele (ESP8266)
+     7. red.h         WiFi + HTTP(S) (ESP8266)
+     8. nodo_invernadero_esp8266.ino   setup() y loop(): une todo
    ===================================================================== */
 
-#if !defined(ARDUINO_ARCH_ESP32)
-  #error "Este firmware es solo para placas ESP32: en Herramientas > Placa elija ESP32 Dev Module o Heltec WiFi LoRa 32(V2). No sirve en Arduino UNO, Nano ni Mega."
+#if !defined(ARDUINO_ARCH_ESP8266)
+  #error "Este firmware es solo para placas ESP8266: en Herramientas > Placa elija NodeMCU 1.0 (ESP-12E Module) o LOLIN(WEMOS) D1 R2 & mini. Para ESP32 use nodo_invernadero_unico_esp32.ino. No sirve en Arduino UNO, Nano ni Mega."
 #endif
 
 /* ---------------------------------------------------------------------
-   BIBLIOTECAS (las de ESP32 vienen con la placa; DHT y ArduinoJson se instalan aparte)
+   BIBLIOTECAS (las de ESP8266 vienen con la placa; DHT y ArduinoJson se instalan aparte)
    --------------------------------------------------------------------- */
 #include <Arduino.h>
-#include <Preferences.h>
-#include <esp_task_wdt.h>
-#include <esp_system.h>
-#include <esp_attr.h>
+#include <EEPROM.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -75,13 +76,10 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <DHT.h>
-#include <driver/gpio.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/queue.h>
+#include <time.h>
 
 /* #####################################################################
    SECCION 1 de 8:  CONFIGURACION DEL USUARIO  (WiFi, servidor, token y opciones)
@@ -120,36 +118,37 @@
 // #define USAR_ANEMOMETRO  1   // lee el anemometro (usar junto con NODO_MASTIL 1)  [por defecto 0]
 // #define USAR_BH1750      0   // busca el sensor de luz BH1750 (si no responde, "luz" va null y no es falla)  [por defecto 1]
 // #define CONSOLA_SERIAL   0   // comandos por USB: r = regar 10 s, p = parar, s = estado (0 en produccion)  [por defecto 1]
-// #define PLACA_HELTEC_V2                // fuerza el mapa de pines de la Heltec V2 (con la placa Heltec se detecta sola)
 
 /* #####################################################################
-   SECCION 2 de 8:  config.h  -  pines, tiempos y opciones del nodo
+   SECCION 2 de 8:  config.h  -  pines, tiempos y opciones del nodo (ESP8266)
    ##################################################################### */
 
 /* =====================================================================
-   config.h  -  AJUSTES DEL NODO (pines, tiempos y opciones)
+   config.h  -  AJUSTES DEL NODO (ESP8266: NodeMCU, Wemos/LOLIN D1 mini y clones)
 
-   Aqui va todo lo que se puede necesitar cambiar. Lo secreto (WiFi,
-   servidor, token) va en el bloque CONFIGURACION DEL USUARIO (arriba), NO aqui.
+   Aqui va todo lo que se puede necesitar cambiar (pines, tiempos y opciones).
+   Lo secreto (WiFi, servidor, token) va en el bloque CONFIGURACION DEL USUARIO
+   (al inicio del archivo unico), NO aqui.
 
-   TABLA DE CONEXIONES (mapa por defecto: ESP32 DevKit V1, tabla 18 del informe)
-   +------------------+-------------------+-------------------------------------+
-   | Componente       | Pin del componente| Pin del ESP32                       |
-   +------------------+-------------------+-------------------------------------+
-   | DHT22            | VCC / DATA / GND  | 3V3 / GPIO4 / GND (10k DATA-3V3)    |
-   | YL-38 (YL-69)    | VCC / A0 / GND    | GPIO25 / GPIO34 / GND               |
-   | Rele (bomba)     | VCC / IN / GND    | 5V / GPIO26 / GND                   |
-   | BH1750 (opcional)| VCC / SDA/SCL/GND | 3V3 / GPIO21 / GPIO22 / GND         |
-   | LED indicador    | (de la placa)     | GPIO2 (encendido = regando)         |
-   | Anemometro (opc.)| senal 0-5 V       | GPIO32 mediante divisor de tension  |
-   +------------------+-------------------+-------------------------------------+
-   En la Heltec WiFi LoRa 32 V2 ese mapa CHOCA con el radio LoRa y la pantalla
-   OLED (GPIO26 = DIO0 del SX1276, GPIO4 = SDA del OLED, GPIO34 = DIO2, GPIO25 =
-   LED, GPIO21 = Vext). Por eso, al elegir esa placa se usa otro mapa (abajo).
-   Detalle y verificacion: docs/hardware.md
+   TABLA DE CONEXIONES
+   +------------------+-------------------+---------------------------------------+
+   | Componente       | Pin del componente| Pin de la placa                       |
+   +------------------+-------------------+---------------------------------------+
+   | DHT22            | VCC / DATA / GND  | 3V3 / D5 (GPIO14) / GND (10k DATA-3V3)|
+   | YL-38 (YL-69)    | VCC / A0 / GND    | D7 (GPIO13) / A0 / GND                |
+   | Rele (bomba)     | VCC / IN / GND    | VIN (5 V) / D6 (GPIO12) / GND         |
+   | BH1750 (opcional)| VCC / SDA/SCL/GND | 3V3 / D2 (GPIO4) / D1 (GPIO5) / GND   |
+   | LED indicador    | (de la placa)     | GPIO2 = D4 (encendido = regando)      |
+   | Anemometro (opc.)| senal 0-5 V       | A0 con divisor (solo NODO_MASTIL 1)   |
+   +------------------+-------------------+---------------------------------------+
+   El ESP8266 tiene UNA sola entrada analogica (A0): la usa el suelo (YL-38) o, en el
+   nodo del mastil, el anemometro. Nunca los dos en la misma placa.
+   El YL-38 se alimenta desde D7 y solo se energiza al medir (evita que la sonda se
+   corroa). Si su modulo consume mas de ~12 mA, alimentelo con un transistor.
+   Detalle y comparacion con el ESP32: docs/hardware.md
    ===================================================================== */
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.0.0-esp8266"
 
 /* ---------------------------------------------------------------------
    ROL Y OPCIONES DEL NODO
@@ -160,7 +159,7 @@
                              // 1 = nodo del mastil: SIN suelo ni bomba (solo DHT22 y viento)
 #endif
 #ifndef USAR_ANEMOMETRO
-#define USAR_ANEMOMETRO  0   // 1 = lee el anemometro (poner junto con NODO_MASTIL 1)
+#define USAR_ANEMOMETRO  0   // 1 = lee el anemometro por A0 (solo con NODO_MASTIL 1)
 #endif
 #ifndef USAR_BH1750
 #define USAR_BH1750      1   // 1 = intenta leer el BH1750; si no responde, "luz" va null (sin falla)
@@ -170,47 +169,28 @@
                              // El informe pide deshabilitar el puerto de depuracion en produccion: poner 0.
 #endif
 
-/* Para forzar el mapa de la Heltec V2 al usar otra placa en el IDE, quitar el // : */
-// #define PLACA_HELTEC_V2
-
-#if defined(ARDUINO_HELTEC_WIFI_LORA_32_V2) && !defined(PLACA_HELTEC_V2)
-  #define PLACA_HELTEC_V2    // la placa Heltec V2 se detecta sola
+#if USAR_ANEMOMETRO && !NODO_MASTIL
+  #error "En ESP8266 el anemometro usa el unico pin analogico (A0), el mismo del suelo: use USAR_ANEMOMETRO solo junto con NODO_MASTIL 1 (nodo del mastil, sin suelo)."
 #endif
 
 /* ---------------------------------------------------------------------
-   PINES
-   Regla: el sensor de suelo debe ir en un pin del ADC1 (GPIO32 a GPIO39);
-   el ADC2 no funciona mientras el WiFi esta activo.
+   PINES (numeros GPIO; entre parentesis la etiqueta de la placa NodeMCU / D1 mini)
+   Se evitan los pines de arranque: GPIO0 (D3), GPIO2 (D4, solo el LED) y GPIO15 (D8).
    --------------------------------------------------------------------- */
-#if defined(PLACA_HELTEC_V2)
-  /* Mapa alternativo: usa solo pines que el core NO asigna al radio (5, 14, 18, 19, 26,
-     27, 34, 35), a la pantalla (4, 15, 16), al LED (25) ni a Vext (21). */
-  #define PIN_DHT           13   // DATA del DHT22
-  #define PIN_SUELO         33   // A0 del YL-38 (ADC1_CH5)
-  #define PIN_SUELO_VCC      2   // VCC del YL-38: se energiza solo al medir
-  #define PIN_RELE          17   // IN del modulo de rele
-  #define PIN_LED           25   // LED blanco de la placa
-  #define PIN_SDA           22   // I2C del BH1750
-  #define PIN_SCL           23
-#else
-  /* Mapa por defecto: ESP32 DevKit V1 (tabla 18 del informe). */
-  #define PIN_DHT            4
-  #define PIN_SUELO         34   // solo entrada, ADC1_CH6
-  #define PIN_SUELO_VCC     25
-  #define PIN_RELE          26
-  #define PIN_LED            2
-  #define PIN_SDA           21
-  #define PIN_SCL           22
-#endif
-#define PIN_ANEMOMETRO      32   // ADC1_CH4, libre en ambos mapas (solo si USAR_ANEMOMETRO 1)
-
-#if !NODO_MASTIL
-  static_assert(PIN_SUELO >= 32 && PIN_SUELO <= 39, "El sensor de suelo debe ir en el ADC1 (GPIO32-39)");
-#endif
+#define PIN_DHT            14   // D5: DATA del DHT22
+#define PIN_SUELO          A0   // unica entrada analogica: A0 del YL-38
+#define PIN_SUELO_VCC      13   // D7: VCC del YL-38 (se energiza solo al medir)
+#define PIN_RELE           12   // D6: IN del modulo de rele
+#define PIN_LED             2   // D4: LED de la placa (en la NodeMCU/D1 mini se enciende con LOW)
+#define PIN_SDA             4   // D2: I2C del BH1750
+#define PIN_SCL             5   // D1
+#define PIN_ANEMOMETRO     A0   // solo con NODO_MASTIL 1
 
 /* La mayoria de los modulos de rele son ACTIVOS EN BAJO: cierran el contacto con el pin en LOW.
    Si el suyo funciona al reves, cambiar a false. */
 #define RELE_ACTIVO_EN_BAJO  true
+/* El LED integrado de la NodeMCU y de la D1 mini se enciende con el pin en LOW. */
+#define LED_ACTIVO_EN_BAJO   true
 
 /* ---------------------------------------------------------------------
    SENSOR DHT22
@@ -221,16 +201,18 @@
 
 /* ---------------------------------------------------------------------
    SENSOR DE SUELO YL-38 / YL-69
-   El ADC del ESP32 es de 12 bits (0-4095). Se promedian varias muestras y
-   se lleva a la escala de 10 bits (0-1023) de la tabla de la imagen:
+   El ADC del ESP8266 ya es de 10 bits (0-1023): es EXACTAMENTE la escala de la tabla de la
+   imagen, sin conversion. Se promedian varias muestras.
         0-299   SATURADO   sumergido / muy humedo
       300-699   OPTIMO     suelo humedo, adecuado para la mayoria de las plantas
       700-1023  SECO       tierra seca o sensor fuera del suelo (aire)
+   NodeMCU y D1 mini llevan un divisor que lleva 0-3,2 V (pin A0) a 0-1 V (ADC). Un ESP-12
+   pelado, sin divisor, solo admite 0-1 V en A0.
    --------------------------------------------------------------------- */
 #define SUELO_MUESTRAS            10
 #define SUELO_ESTABILIZACION_MS   50    // la sonda se energiza solo durante la medicion
 #define SUELO_ENTRE_MUESTRAS_MS   20
-#define SUELO_DISPERSION_MAX_12B  400   // diferencia max-min entre muestras (0-4095) mas alla de
+#define SUELO_DISPERSION_MAX      100   // diferencia max-min entre muestras (0-1023) mas alla de
                                         // la cual la lectura se considera inestable (cable suelto)
 
 /* Calibracion LOCAL: solo sirve para mostrar el % por el Monitor Serie. El % que ve el
@@ -240,27 +222,35 @@
 
 /* ---------------------------------------------------------------------
    BH1750 (I2C, direccion 0x23) y ANEMOMETRO (0-5 V = 0-45 m/s)
-   Divisor para el anemometro: R_ARRIBA = 20 k (entre la senal y el pin) y
-   R_ABAJO = 10 k (entre el pin y GND) => 5 V -> 1,67 V, dentro de la zona
-   lineal del ADC.
+   Divisor para el anemometro: R_ARRIBA = 20 k (entre la senal y A0) y
+   R_ABAJO = 10 k (entre A0 y GND) => 5 V -> 1,67 V en el pin A0.
+   ADC_A0_ESCALA_V es la tension en A0 que da la lectura maxima (1023): 3,2 V en la
+   NodeMCU y en la D1 mini.
    --------------------------------------------------------------------- */
 #define BH1750_DIRECCION      0x23
 #define ANEMOMETRO_R_ARRIBA   20000.0f
 #define ANEMOMETRO_R_ABAJO    10000.0f
 #define ANEMOMETRO_V_MAX      5.0f
 #define ANEMOMETRO_MS_MAX     45.0f
+#define ADC_A0_ESCALA_V       3.2f
 
 /* ---------------------------------------------------------------------
-   TIEMPOS DEL BUCLE
+   TIEMPOS DEL BUCLE Y DE LA RED
    --------------------------------------------------------------------- */
 #define MUESTREO_RIEGO_S      5       // mientras la bomba esta encendida se mide cada 5 s
 #define PERIODO_LOOP_MS       10      // pausa por vuelta (el corte por tiempo se evalua en cada una)
-#define WDT_TIMEOUT_S         15      // el watchdog reinicia el nodo si el bucle se cuelga
-#define REINICIO_RED_TRABADA_S 120    // si la tarea de red no responde en tanto tiempo, se reinicia el nodo
 #define TRAMAS_AVISO_WDT      3       // cuantas tramas informan "reinicio_wdt" tras un reinicio por watchdog
+#define HTTP_TIMEOUT_MS       8000    // tiempo maximo de un POST. El ESP8266 no tiene otro nucleo: mientras
+                                      // dura, el bucle espera; por eso NUNCA se hace con la bomba encendida.
+#define WIFI_REINTENTO_MS     20000   // primer reintento de conexion WiFi; luego se duplica hasta 5 min
+
+/* HTTPS en ESP8266 (BearSSL): memoria para los buffers de TLS. Con 16 KB de entrada cabe cualquier
+   servidor pero casi toda la RAM libre se va en eso; con menos, algunos servidores fallan. */
+#define TLS_BUFFER_RX         4096
+#define TLS_BUFFER_TX         1024
 
 /* #####################################################################
-   SECCION 3 de 8:  riego.h  -  reglas del riego (logica pura)
+   SECCION 3 de 8:  riego.h  -  reglas del riego (logica pura, igual que en el ESP32)
    ##################################################################### */
 
 /* =====================================================================
@@ -1238,22 +1228,25 @@ inline bool parsearRespuesta(const char* json, size_t n, const riego::Config& ac
 }  // namespace protocolo
 
 /* #####################################################################
-   SECCION 6 de 8:  sensores.h  -  DHT22, YL-38, BH1750, anemometro y rele
+   SECCION 6 de 8:  sensores.h  -  DHT22, YL-38, BH1750, anemometro y rele (ESP8266)
    ##################################################################### */
 
 /* =====================================================================
-   sensores.h  -  LECTURA DE SENSORES Y CONTROL DEL RELE (usa Arduino)
+   sensores.h  -  LECTURA DE SENSORES Y CONTROL DEL RELE (ESP8266)
 
    DHT22 (temperatura y humedad del aire) | YL-38/YL-69 (humedad de suelo)
-   BH1750 (luz, opcional)                 | anemometro (viento, opcional)
+   BH1750 (luz, opcional)                 | anemometro (viento, opcional; solo mastil)
    Modulo de rele de la bomba.
 
    Ninguna funcion bloquea mas de ~250 ms (la medicion del suelo es la mas
-   larga: 50 ms de estabilizacion + 10 muestras separadas 20 ms).
+   larga: 50 ms de estabilizacion + 10 muestras separadas 20 ms). Todas las
+   esperas usan delay(), que cede el control al WiFi y al perro guardian.
    ===================================================================== */
 
 #define NIVEL_RELE_ON   (RELE_ACTIVO_EN_BAJO ? LOW : HIGH)
 #define NIVEL_RELE_OFF  (RELE_ACTIVO_EN_BAJO ? HIGH : LOW)
+#define NIVEL_LED_ON    (LED_ACTIVO_EN_BAJO ? LOW : HIGH)
+#define NIVEL_LED_OFF   (LED_ACTIVO_EN_BAJO ? HIGH : LOW)
 
 namespace sensores {
 
@@ -1268,8 +1261,9 @@ inline void releIniciarSeguro() {
   digitalWrite(PIN_RELE, NIVEL_RELE_OFF);
   pinMode(PIN_RELE, OUTPUT);
   digitalWrite(PIN_RELE, NIVEL_RELE_OFF);
+  digitalWrite(PIN_LED, NIVEL_LED_OFF);
   pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_LED, LOW);
+  digitalWrite(PIN_LED, NIVEL_LED_OFF);
 #endif
 }
 
@@ -1277,7 +1271,7 @@ inline void releIniciarSeguro() {
 inline void releAplicar(bool encendida) {
 #if !NODO_MASTIL
   digitalWrite(PIN_RELE, encendida ? NIVEL_RELE_ON : NIVEL_RELE_OFF);
-  digitalWrite(PIN_LED, encendida ? HIGH : LOW);
+  digitalWrite(PIN_LED, encendida ? NIVEL_LED_ON : NIVEL_LED_OFF);
 #else
   (void)encendida;
 #endif
@@ -1300,33 +1294,32 @@ inline bool leerDHT(float& temperatura, float& humedad) {
 /* ---------- Suelo: YL-38 / YL-69 ---------- */
 struct Suelo {
   bool ok;         // false = lectura inestable (cable suelto o sensor ausente)
-  int  raw10;      // 0..1023: escala de la tabla de la imagen
-  int  raw12;      // 0..4095: lectura original del ADC
-  int  dispersion; // max - min entre las muestras (en cuentas de 12 bits)
+  int  raw10;      // 0..1023: escala de la tabla de la imagen (el ADC del ESP8266 ya es de 10 bits)
+  int  dispersion; // max - min entre las muestras
 };
 
 /* El YL-69 es resistivo: si se mantiene energizado, la corriente continua entre sus electrodos
-   lo corroe por electrolisis en pocas semanas. Por eso se alimenta desde un pin del ESP32 y solo
-   se enciende durante la medicion (50 ms + 10 muestras). */
+   lo corroe por electrolisis en pocas semanas. Por eso se alimenta desde un pin y solo se enciende
+   durante la medicion (50 ms + 10 muestras). */
 inline Suelo medirSuelo() {
-  Suelo s = {false, 0, 0, 0};
+  Suelo s = {false, 0, 0};
 #if !NODO_MASTIL
   digitalWrite(PIN_SUELO_VCC, HIGH);
   delay(SUELO_ESTABILIZACION_MS);
   long suma = 0;
-  int minimo = 4095, maximo = 0;
+  int minimo = 1023, maximo = 0;
   for (int i = 0; i < SUELO_MUESTRAS; i++) {
-    const int v = analogRead(PIN_SUELO);
+    int v = analogRead(PIN_SUELO);
+    if (v > 1023) v = 1023;
     suma += v;
     if (v < minimo) minimo = v;
     if (v > maximo) maximo = v;
     delay(SUELO_ENTRE_MUESTRAS_MS);
   }
   digitalWrite(PIN_SUELO_VCC, LOW);
-  s.raw12 = (int)(suma / SUELO_MUESTRAS);
-  s.raw10 = s.raw12 / 4;                       // 12 bits (0-4095) -> 10 bits (0-1023)
+  s.raw10 = (int)(suma / SUELO_MUESTRAS);
   s.dispersion = maximo - minimo;
-  s.ok = (s.dispersion <= SUELO_DISPERSION_MAX_12B);
+  s.ok = (s.dispersion <= SUELO_DISPERSION_MAX);
 #endif
   return s;
 }
@@ -1377,14 +1370,15 @@ inline bool leerLuz(float& lux) {
 inline bool leerLuz(float&) { return false; }
 #endif
 
-/* ---------- Anemometro (solo nodo del mastil): senal 0-5 V = 0-45 m/s ---------- */
+/* ---------- Anemometro (solo nodo del mastil): senal 0-5 V = 0-45 m/s por A0 ---------- */
 #if USAR_ANEMOMETRO
 inline bool leerViento(float& ms) {
-  long suma_mv = 0;
-  for (int i = 0; i < 10; i++) { suma_mv += analogReadMilliVolts(PIN_ANEMOMETRO); delay(2); }
-  const float mv_pin = (float)suma_mv / 10.0f;                         // tension en el pin (ya calibrada)
+  long suma = 0;
+  for (int i = 0; i < 10; i++) { suma += analogRead(PIN_ANEMOMETRO); delay(2); }
+  const float crudo = (float)suma / 10.0f;                              // 0..1023
+  const float v_pin = crudo / 1023.0f * ADC_A0_ESCALA_V;                // tension en el pin A0 de la placa
   const float divisor = (ANEMOMETRO_R_ARRIBA + ANEMOMETRO_R_ABAJO) / ANEMOMETRO_R_ABAJO;
-  const float v_sensor = mv_pin / 1000.0f * divisor;                   // reconstruye los 0-5 V del sensor
+  const float v_sensor = v_pin * divisor;                               // reconstruye los 0-5 V del sensor
   if (v_sensor < 0.0f || v_sensor > ANEMOMETRO_V_MAX * 1.1f) return false;
   float v = v_sensor / ANEMOMETRO_V_MAX * ANEMOMETRO_MS_MAX;
   if (v > ANEMOMETRO_MS_MAX) v = ANEMOMETRO_MS_MAX;
@@ -1397,54 +1391,45 @@ inline bool leerViento(float&) { return false; }
 
 /* ---------- Inicio ---------- */
 inline void iniciar() {
-  analogReadResolution(12);                    // ESP32: 0 a 4095
 #if !NODO_MASTIL
   pinMode(PIN_SUELO_VCC, OUTPUT);
   digitalWrite(PIN_SUELO_VCC, LOW);            // sonda sin energia mientras no se mide
-  /* El modulo YL-38 se alimenta desde este pin y consume del orden de 20 mA con la sonda
-     energizada (tabla 3 del informe). Se sube el pin a la mayor capacidad de corriente que ofrece
-     el ESP32 (GPIO_DRIVE_CAP_3 = "strongest" en el SDK) para que el modulo no arrastre la tension
-     del pin ni falsee la lectura. Si su modulo consume mas, alimentelo con un transistor. */
-  gpio_set_drive_capability((gpio_num_t)PIN_SUELO_VCC, GPIO_DRIVE_CAP_3);
-  analogSetPinAttenuation(PIN_SUELO, ADC_11db);   // rango completo del ADC (~0 a 3,3 V)
-  pinMode(PIN_SUELO, INPUT);
 #endif
   dht.begin();
 #if USAR_BH1750
   Wire.begin(PIN_SDA, PIN_SCL);
-  Wire.setTimeOut(50);                         // un bus colgado no debe bloquear el bucle
+  Wire.setClockStretchLimit(2000);             // un bus colgado no debe bloquear el bucle (microsegundos)
   if (luzDetectar()) delay(180);               // primera medicion del BH1750
-#endif
-#if USAR_ANEMOMETRO
-  analogSetPinAttenuation(PIN_ANEMOMETRO, ADC_11db);
 #endif
 }
 
 }  // namespace sensores
 
 /* #####################################################################
-   SECCION 7 de 8:  red.h  -  WiFi y HTTP(S) en una tarea aparte
+   SECCION 7 de 8:  red.h  -  WiFi y HTTP(S) (ESP8266, sin tareas: nunca con la bomba encendida)
    ##################################################################### */
 
 /* =====================================================================
-   red.h  -  WIFI Y CLIENTE HTTP(S) EN UNA TAREA APARTE (nucleo 0)
+   red.h  -  WIFI Y CLIENTE HTTP(S) PARA ESP8266 (un solo nucleo, sin FreeRTOS)
 
-   La red puede tardar segundos (reconectar el WiFi, un servidor lento).
-   Si eso ocurriera en loop(), el corte de la bomba por tiempo se
-   retrasaria. Por eso TODO lo que espera a la red vive en esta tarea de
-   FreeRTOS, y el bucle de control (nucleo 1) solo se comunica con ella
-   por dos colas, sin esperar nunca:
+   A diferencia del ESP32, el ESP8266 no tiene un segundo nucleo ni tareas:
+   un POST HTTP bloquea el bucle mientras dura (0,3 a 8 s). Para que eso
+   nunca afecte al riego, el sketch aplica UNA regla (ver gestionarEnvio):
 
-       loop() --- MsgTx (cuerpo JSON ya armado) ---> tarea de red --> POST
-       loop() <-- MsgRx (codigo HTTP + respuesta) --- tarea de red <-- 200/4xx/5xx
+       NUNCA se hace red con la bomba encendida.
 
-   La tarea de red no interpreta el JSON: solo transporta. Asi el riego
-   automatico sigue funcionando aunque no haya WiFi ni servidor.
+   Asi el corte de la bomba por tiempo se evalua en cada vuelta (~10 ms) y
+   ningun POST puede alargar un riego. Los eventos (bomba encendida/apagada)
+   y los acuses quedan en cola y viajan apenas la bomba se apaga.
+
+   La interfaz es la misma que en el ESP32 (redEnviar / redRecibir ...), pero
+   redEnviar() hace el POST en el momento y deja la respuesta lista para
+   redRecibir(). La conexion WiFi es asincrona y se mantiene con redMantener().
    ===================================================================== */
 
-/* Credenciales (WIFI_SSID, WIFI_PASS, SERVER_URL, DEVICE_TOKEN, CA_ROOT_PEM...): salen del bloque
-   CONFIGURACION DEL USUARIO, al inicio de este archivo. Con los valores de ejemplo el nodo funciona
-   en modo local. */
+/* Credenciales: WIFI_SSID, WIFI_PASS, SERVER_URL, DEVICE_TOKEN (y CA_ROOT_PEM o TLS_INSEGURO si se
+   usa HTTPS) salen del bloque CONFIGURACION DEL USUARIO, al inicio de este archivo. Con los valores
+   de ejemplo el nodo funciona en modo local. */
 
 #define URL_INGEST  SERVER_URL "/api/ingest"
 
@@ -1502,44 +1487,53 @@ class BufferAcotado : public Stream {
   char* b_; size_t cap_; size_t n_;
 };
 
+/* Certificado raiz para verificar al servidor por HTTPS (solo si se definio CA_ROOT_PEM). */
+#if defined(CA_ROOT_PEM) && !defined(TLS_INSEGURO)
+static BearSSL::X509List ca_raiz(CA_ROOT_PEM);
+#endif
+
 namespace red {
 
-static QueueHandle_t colaTx = nullptr;
-static QueueHandle_t colaRx = nullptr;
-
-/* Buffers de la tarea de red (estaticos: no van a la pila). */
-static MsgTx tx;
-static MsgRx rx;
+static bool   activa = false;
+static bool   hay_rx = false;          // hay una respuesta lista para redRecibir()
+static MsgRx  rx;                      // estatico: es grande y no debe ir a la pila
 
 static uint32_t t_intento_wifi = 0;
-static uint32_t espera_wifi_ms = 5000;
+static uint32_t espera_wifi_ms = WIFI_REINTENTO_MS;
 static bool     hubo_intento_wifi = false;
+static bool     estaba_conectado = false;
 
-/* Conecta (o reconecta) el WiFi con espera creciente: 5 s, 10 s, 20 s ... tope 5 min. */
-inline void asegurarWiFi() {
-  if (WiFi.status() == WL_CONNECTED) { espera_wifi_ms = 5000; return; }
+/* Mantiene el WiFi SIN bloquear: WiFi.begin() conecta en segundo plano. Si no se logra, reintenta con
+   espera creciente (20 s, 40 s, 80 s ... tope 5 min). Se llama en cada vuelta del bucle. */
+inline void mantenerWiFi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!estaba_conectado) {
+      estaba_conectado = true;
+      Serial.printf("WiFi: conectado, IP %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+    }
+    espera_wifi_ms = WIFI_REINTENTO_MS;
+    hubo_intento_wifi = false;
+    return;
+  }
+  if (estaba_conectado) {
+    estaba_conectado = false;
+    Serial.println("WiFi: conexion perdida");
+  }
   const uint32_t ahora = millis();
   if (hubo_intento_wifi && (uint32_t)(ahora - t_intento_wifi) < espera_wifi_ms) return;
-  hubo_intento_wifi = true;
-  t_intento_wifi = ahora;
-
-  Serial.printf("WiFi: conectando a \"%s\" ...\n", WIFI_SSID);
-  WiFi.disconnect(false, false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  const uint32_t t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && (uint32_t)(millis() - t0) < 10000) vTaskDelay(pdMS_TO_TICKS(250));
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("WiFi: conectado, IP %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    espera_wifi_ms = 5000;
-  } else {
-    Serial.printf("WiFi: sin conexion, se reintenta en %lu s\n", (unsigned long)(espera_wifi_ms / 1000));
-    if (espera_wifi_ms < 300000UL) espera_wifi_ms *= 2;
+  if (hubo_intento_wifi && espera_wifi_ms < 300000UL) {
+    espera_wifi_ms *= 2;
     if (espera_wifi_ms > 300000UL) espera_wifi_ms = 300000UL;
   }
+  hubo_intento_wifi = true;
+  t_intento_wifi = ahora;
+  Serial.printf("WiFi: conectando a \"%s\" ...\n", WIFI_SSID);
+  WiFi.disconnect(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
 }
 
-/* Hace el POST de una trama y deja el resultado en rx. */
+/* Hace el POST de una trama y deja el resultado en r. BLOQUEA hasta HTTP_TIMEOUT_MS (por eso nunca
+   se llama con la bomba encendida). */
 inline void enviarPost(const MsgTx& t, MsgRx& r) {
   r.seq = t.seq;
   r.http = -1;
@@ -1550,22 +1544,27 @@ inline void enviarPost(const MsgTx& t, MsgRx& r) {
   if (WiFi.status() != WL_CONNECTED) return;
 
   const bool https = strncmp(SERVER_URL, "https://", 8) == 0;
-  WiFiClient*       plano  = nullptr;
-  WiFiClientSecure* seguro = nullptr;
+  WiFiClient*                plano  = nullptr;
+  BearSSL::WiFiClientSecure* seguro = nullptr;
   HTTPClient http;
   bool ok = false;
 
   if (https) {
 #if defined(TLS_INSEGURO) || defined(CA_ROOT_PEM)
-    seguro = new WiFiClientSecure();
+    if (ESP.getFreeHeap() < 20000) { r.http = -3; return; }          // sin memoria para TLS: se reintenta despues
+    seguro = new BearSSL::WiFiClientSecure();
+    seguro->setBufferSizes(TLS_BUFFER_RX, TLS_BUFFER_TX);
   #if defined(TLS_INSEGURO)
-    seguro->setInsecure();                       // SOLO DESARROLLO: no verifica al servidor
+    seguro->setInsecure();                                            // SOLO DESARROLLO: no verifica al servidor
   #else
-    seguro->setCACert(CA_ROOT_PEM);              // verifica la cadena contra la CA de CA_ROOT_PEM
+    const time_t ahora_utc = time(nullptr);
+    if (ahora_utc < 1700000000) { delete seguro; r.http = -2; return; }   // aun sin hora NTP: no se puede validar
+    seguro->setX509Time(ahora_utc);
+    seguro->setTrustAnchors(&ca_raiz);                                // verifica la cadena contra CA_ROOT_PEM
   #endif
     ok = http.begin(*seguro, URL_INGEST);
 #else
-    return;                                      // no se llega aqui: redIniciar() no arranca la red sin CA
+    return;                                                           // no se llega aqui: redIniciar() no arranca la red sin CA
 #endif
   } else {
     plano = new WiFiClient();
@@ -1573,9 +1572,8 @@ inline void enviarPost(const MsgTx& t, MsgRx& r) {
   }
 
   if (ok) {
-    http.setConnectTimeout(5000);
-    http.setTimeout(10000);              // lectura: el servidor puede tardar ~1,2 s por trama y hasta ~5 s tras un
-                                         // periodo inactivo (conexion "fria" a la base). Solo bloquea a la tarea de red.
+    http.setTimeout(HTTP_TIMEOUT_MS);    // conexion y lectura. El servidor puede tardar ~1,2 s por trama y hasta
+                                         // ~5 s tras un periodo inactivo (conexion "fria" a la base).
     http.setReuse(false);
     http.setUserAgent("nodo-invernadero/" FW_VERSION);
     http.addHeader("Content-Type", "application/json");
@@ -1583,7 +1581,7 @@ inline void enviarPost(const MsgTx& t, MsgRx& r) {
     const char* claves[] = {"Retry-After"};
     http.collectHeaders(claves, 1);
 
-    const int codigo = http.POST((uint8_t*)t.cuerpo, t.n);
+    const int codigo = http.POST((const uint8_t*)t.cuerpo, t.n);
     r.http = codigo;
     r.recibido_ms = millis();
     if (codigo > 0) {
@@ -1599,22 +1597,11 @@ inline void enviarPost(const MsgTx& t, MsgRx& r) {
   delete seguro;
 }
 
-/* Tarea de red: espera tramas, las envia y devuelve el resultado. */
-inline void tarea(void*) {
-  for (;;) {
-    asegurarWiFi();
-    if (xQueueReceive(colaTx, &tx, pdMS_TO_TICKS(500)) == pdTRUE) {
-      enviarPost(tx, rx);
-      xQueueSend(colaRx, &rx, 0);
-    }
-  }
-}
-
 }  // namespace red
 
-/* ---------- Interfaz para el bucle de control (nunca bloquea) ---------- */
+/* ---------- Interfaz para el bucle de control ---------- */
 
-inline bool redActiva() { return red::colaTx != nullptr; }
+inline bool redActiva() { return red::activa; }
 
 inline void redIniciar() {
   if (credencialesDeEjemplo()) {
@@ -1626,31 +1613,44 @@ inline void redIniciar() {
     Serial.println("     No se enviara nada para no exponer el token. El riego local sigue funcionando.");
     return;
   }
-  red::colaTx = xQueueCreate(1, sizeof(MsgTx));
-  red::colaRx = xQueueCreate(2, sizeof(MsgRx));
-  if (!red::colaTx || !red::colaRx) {
-    Serial.println("RED: sin memoria para las colas -> sin conexion");
-    red::colaTx = nullptr;
-    return;
-  }
   WiFi.persistent(false);              // no escribe las credenciales en la flash en cada arranque
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);                // el nodo va con alimentacion de red: prioriza estabilidad sobre consumo
-  xTaskCreatePinnedToCore(red::tarea, "red", 10240, nullptr, 1, nullptr, 0);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);  // el nodo va con alimentacion de red: prioriza estabilidad sobre consumo
+#if defined(CA_ROOT_PEM) && !defined(TLS_INSEGURO)
+  configTime(0, 0, "pool.ntp.org", "time.google.com");   // la validacion de certificados necesita la hora
+#endif
+  red::activa = true;
+  red::mantenerWiFi();                 // primer intento de conexion, sin esperar
 }
 
-inline bool redConectada() { return redActiva() && WiFi.status() == WL_CONNECTED; }
-inline int  redRssi()      { return WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0; }
+/* Mantiene el WiFi. Barato: se llama en cada vuelta. */
+inline void redMantener() {
+  if (red::activa) red::mantenerWiFi();
+}
 
-/* Entrega una trama a la tarea de red. false si la cola esta ocupada. */
-inline bool redEnviar(const MsgTx& m) { return redActiva() && xQueueSend(red::colaTx, &m, 0) == pdTRUE; }
+inline bool redConectada() { return red::activa && WiFi.status() == WL_CONNECTED; }
+inline int  redRssi()      { return WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0; }
 
-/* Recoge un resultado si hay uno. */
-inline bool redRecibir(MsgRx& m) { return redActiva() && xQueueReceive(red::colaRx, &m, 0) == pdTRUE; }
+/* Hace el POST de la trama AHORA (bloquea hasta HTTP_TIMEOUT_MS) y deja la respuesta para redRecibir().
+   false si la red no esta activa o aun hay una respuesta sin recoger. */
+inline bool redEnviar(const MsgTx& m) {
+  if (!red::activa || red::hay_rx) return false;
+  red::enviarPost(m, red::rx);
+  red::hay_rx = true;
+  return true;
+}
+
+/* Recoge la respuesta del ultimo POST, si la hay. */
+inline bool redRecibir(MsgRx& m) {
+  if (!red::activa || !red::hay_rx) return false;
+  memcpy(&m, &red::rx, sizeof(MsgRx));
+  red::hay_rx = false;
+  return true;
+}
 
 /* #####################################################################
-   SECCION 8 de 8:  nodo_invernadero.ino  -  setup() y loop(): une todo
+   SECCION 8 de 8:  nodo_invernadero_esp8266.ino  -  setup() y loop(): une todo
    ##################################################################### */
 
 /* ---------------------------------------------------------------------
@@ -1658,24 +1658,37 @@ inline bool redRecibir(MsgRx& m) { return redActiva() && xQueueReceive(red::cola
    --------------------------------------------------------------------- */
 static riego::Controlador ctl;
 static envio::Plan        plan;
-static Preferences        prefs;
 
-/* Memoria RTC que sobrevive a reinicios por software, watchdog o panico (no a un corte de
+/* Memoria RTC de usuario: sobrevive a reinicios por software, watchdog o excepcion (no a un corte de
    energia). Sirve para saber si el nodo se reinicio CON LA BOMBA ENCENDIDA. */
-RTC_NOINIT_ATTR uint32_t rtc_magia;
-RTC_NOINIT_ATTR uint32_t rtc_bomba_activa;
-static const uint32_t RTC_MAGIA = 0xB0B4C0DEUL;
+struct EstadoRtc {
+  uint32_t magia;
+  uint32_t bomba_activa;
+};
+static const uint32_t RTC_MAGIA  = 0xB0B4C0DEUL;
+static const uint32_t RTC_BLOQUE = 0;                 // primer bloque (4 bytes) de la memoria RTC de usuario
+
+static void rtcGuardarBomba(bool encendida) {
+  EstadoRtc s = { RTC_MAGIA, encendida ? 1UL : 0UL };
+  ESP.rtcUserMemoryWrite(RTC_BLOQUE, reinterpret_cast<uint32_t*>(&s), sizeof(s));
+}
+
+static bool rtcBombaEstabaActiva() {
+  EstadoRtc s = { 0, 0 };
+  if (!ESP.rtcUserMemoryRead(RTC_BLOQUE, reinterpret_cast<uint32_t*>(&s), sizeof(s))) return false;
+  return s.magia == RTC_MAGIA && s.bomba_activa == 1;
+}
 
 /* Ultimos valores medidos (los que viajan en la trama). */
 struct Ultima {
   bool  hay;
   bool  temp_ok;   float temp;
   bool  hum_ok;    float hum;
-  bool  suelo_ok;  int   suelo_raw;  int suelo_raw12;
+  bool  suelo_ok;  int   suelo_raw;
   bool  luz_ok;    float luz;
   bool  viento_ok; float viento;
 };
-static Ultima ultima = {false, false, 0, false, 0, false, 0, 0, false, 0, false, 0};
+static Ultima ultima = {false, false, 0, false, 0, false, 0, false, 0, false, 0};
 
 /* Ronda de medicion en curso. El DHT22 puede pedir reintentos separados 2,1 s: se hacen sin
    bloquear el bucle. */
@@ -1684,7 +1697,7 @@ struct Ronda {
   bool     con_dht;
   uint8_t  intentos_dht;
   uint32_t t_dht;
-  bool     suelo_ok;  int suelo_raw;  int suelo_raw12;  int dispersion;
+  bool     suelo_ok;  int suelo_raw;  int dispersion;
   bool     temp_ok;   float temp;
   bool     hum_ok;    float hum;
   bool     luz_ok;    float luz;
@@ -1701,8 +1714,6 @@ static protocolo::DatosTrama datos;                 // estatico: es grande
 static MsgTx                msg_pend;               // trama construida (se reenvia igual si falla)
 static uint32_t             ev_hasta_pend = 0, ack_hasta_pend = 0;   // hasta que seq viajo en msg_pend
 static uint32_t             ev_incluido_max = 0, ack_incluido_max = 0;
-static uint8_t              entregas_sin_rx = 0;    // tramas entregadas a la tarea de red que aun no devolvieron nada
-static uint32_t             t_entrega_ms = 0;       // desde cuando se espera la respuesta mas antigua
 static uint8_t              tramas_aviso_wdt = 0;
 
 static bool     rele_estado_previo = false;
@@ -1727,7 +1738,7 @@ static void aplicarBomba() {
   }
   if (on != rele_estado_previo) {
     rele_estado_previo = on;
-    rtc_bomba_activa = on ? 1 : 0;
+    rtcGuardarBomba(on);
     const uint8_t n = ctl.eventosPendientes();
     if (n) {
       const riego::Evento& e = ctl.evento(n - 1);
@@ -1740,39 +1751,68 @@ static void aplicarBomba() {
 }
 
 /* ---------------------------------------------------------------------
-   CONFIGURACION EN MEMORIA NO VOLATIL (NVS): sobrevive a reinicios
+   CONFIGURACION EN MEMORIA NO VOLATIL (flash, emulando EEPROM): sobrevive a reinicios
+   Se escribe SOLO cuando el servidor cambia la configuracion (rara vez): la flash tiene
+   un numero limitado de escrituras.
    --------------------------------------------------------------------- */
+struct CfgFlash {
+  uint32_t magia;
+  uint32_t ver;
+  uint16_t intervalo_s;
+  uint16_t suelo_on;
+  uint16_t suelo_off;
+  uint16_t suelo_sat;
+  uint16_t riego_max_s;
+  uint16_t espera_s;
+  float    temp_max;
+  uint32_t suma;          // control de integridad (FNV-1a de todo lo anterior)
+};
+static const uint32_t CFG_MAGIA = 0xC0F16A02UL;
+
+/* FNV-1a. OJO: las funciones de este archivo NO deben recibir tipos definidos en este mismo archivo
+   (por eso aqui va un puntero a bytes y no un CfgFlash): el IDE de Arduino les genera un prototipo
+   automatico al principio del archivo, antes de que esos tipos existan. */
+static uint32_t sumaBytes(const uint8_t* p, size_t n) {
+  uint32_t h = 2166136261UL;
+  for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 16777619UL; }
+  return h;
+}
+
 static void guardarConfig(const riego::Config& c) {
-  prefs.begin("nodo", false);
-  prefs.putUInt("cver", c.ver);
-  prefs.putUShort("cint", c.intervalo_s);
-  prefs.putUShort("con", c.suelo_on);
-  prefs.putUShort("coff", c.suelo_off);
-  prefs.putUShort("csat", c.suelo_sat);
-  prefs.putFloat("ctmx", c.temp_max);
-  prefs.putUShort("crmx", c.riego_max_s);
-  prefs.putUShort("cesp", c.espera_s);
-  prefs.end();
+  CfgFlash f;
+  memset(&f, 0, sizeof(f));
+  f.magia = CFG_MAGIA;
+  f.ver = c.ver;
+  f.intervalo_s = c.intervalo_s;
+  f.suelo_on = c.suelo_on;
+  f.suelo_off = c.suelo_off;
+  f.suelo_sat = c.suelo_sat;
+  f.riego_max_s = c.riego_max_s;
+  f.espera_s = c.espera_s;
+  f.temp_max = c.temp_max;
+  f.suma = sumaBytes(reinterpret_cast<const uint8_t*>(&f), offsetof(CfgFlash, suma));
+  EEPROM.put(0, f);
+  if (!EEPROM.commit()) Serial.println("CFG: no se pudo guardar en la memoria flash");
 }
 
 static void cargarConfig() {
-  prefs.begin("nodo", false);
-  if (prefs.isKey("cver")) {
+  CfgFlash f;
+  EEPROM.get(0, f);
+  if (f.magia == CFG_MAGIA && f.suma == sumaBytes(reinterpret_cast<const uint8_t*>(&f), offsetof(CfgFlash, suma))) {
     riego::Config c = riego::configPorDefecto();
-    c.ver         = prefs.getUInt("cver", c.ver);
-    c.intervalo_s = prefs.getUShort("cint", c.intervalo_s);
-    c.suelo_on    = prefs.getUShort("con", c.suelo_on);
-    c.suelo_off   = prefs.getUShort("coff", c.suelo_off);
-    c.suelo_sat   = prefs.getUShort("csat", c.suelo_sat);
-    c.temp_max    = prefs.getFloat("ctmx", c.temp_max);
-    c.riego_max_s = prefs.getUShort("crmx", c.riego_max_s);
-    c.espera_s    = prefs.getUShort("cesp", c.espera_s);
+    c.ver         = f.ver;
+    c.intervalo_s = f.intervalo_s;
+    c.suelo_on    = f.suelo_on;
+    c.suelo_off   = f.suelo_off;
+    c.suelo_sat   = f.suelo_sat;
+    c.temp_max    = f.temp_max;
+    c.riego_max_s = f.riego_max_s;
+    c.espera_s    = f.espera_s;
     if (ctl.aplicarConfig(c)) Serial.printf("CFG: cargada de la memoria (ver %lu)\n", (unsigned long)c.ver);
     else Serial.println("CFG: la guardada es invalida; se usan los valores por defecto");
   } else {
     Serial.println("CFG: sin configuracion guardada; valores por defecto del contrato");
   }
-  prefs.end();
 }
 
 static void imprimirConfig(const char* prefijo) {
@@ -1792,7 +1832,7 @@ static void imprimirEstado() {
   if (ultima.hum_ok)  Serial.printf("Humedad aire %.1f %%\n", (double)ultima.hum); else Serial.println("Humedad aire sin lectura");
 #if !NODO_MASTIL
   if (ultima.suelo_ok) {
-    Serial.printf("Suelo: %d (0-1023; ADC 12 bits: %d) -> %s, %d %% | ", ultima.suelo_raw, ultima.suelo_raw12,
+    Serial.printf("Suelo: %d (0-1023) -> %s, %d %% | ", ultima.suelo_raw,
                   riego::nombreBanda(ctl.banda(ultima.suelo_raw)), sensores::porcentajeLocal(ultima.suelo_raw));
   } else {
     Serial.print("Suelo: SIN LECTURA VALIDA | ");
@@ -1819,7 +1859,7 @@ static void finalizarRonda() {
   }                                                   // sin lectura de DHT (bomba encendida): se conserva el ultimo valor
   l.temp_ok = ultima.temp_ok;
   l.temp    = ultima.temp;
-  ultima.suelo_ok = ronda.suelo_ok;  ultima.suelo_raw = ronda.suelo_raw;  ultima.suelo_raw12 = ronda.suelo_raw12;
+  ultima.suelo_ok = ronda.suelo_ok;  ultima.suelo_raw = ronda.suelo_raw;
   ultima.luz_ok = ronda.luz_ok;      ultima.luz = ronda.luz;
   ultima.viento_ok = ronda.viento_ok; ultima.viento = ronda.viento;
   ultima.hay = true;
@@ -1856,7 +1896,7 @@ static void iniciarRonda() {
   ronda.activa = true;
 #if !NODO_MASTIL
   const sensores::Suelo s = sensores::medirSuelo();
-  ronda.suelo_ok = s.ok;  ronda.suelo_raw = s.raw10;  ronda.suelo_raw12 = s.raw12;  ronda.dispersion = s.dispersion;
+  ronda.suelo_ok = s.ok;  ronda.suelo_raw = s.raw10;  ronda.dispersion = s.dispersion;
   if (!s.ok) Serial.printf("ERROR: lectura de suelo inestable (dispersion %d): revise el cableado del YL-38\n", s.dispersion);
 #endif
 #if USAR_BH1750
@@ -1958,8 +1998,6 @@ static void atenderOrdenes(protocolo::Respuesta& resp, uint32_t recibida_ms) {
 }
 
 static void procesarRespuesta(const MsgRx& rx) {
-  /* Cualquier respuesta prueba que la tarea de red esta viva (aunque sea de una trama vieja). */
-  if (entregas_sin_rx) { entregas_sin_rx--; t_entrega_ms = millis(); }
   if (!plan.enVuelo() || rx.seq != msg_pend.seq) return;       // respuesta tardia o de otra trama
   const uint32_t intervalo_ms = (uint32_t)ctl.config().intervalo_s * 1000UL;
 
@@ -1991,13 +2029,6 @@ static void procesarRespuesta(const MsgRx& rx) {
   }
 }
 
-/* Registra que una trama se entrego a la tarea de red. */
-static void entregada() {
-  plan.entregada(millis());
-  if (entregas_sin_rx == 0) t_entrega_ms = millis();
-  if (entregas_sin_rx < 250) entregas_sin_rx++;
-}
-
 static void gestionarEnvio() {
   if (!redActiva()) return;
   const uint32_t intervalo_ms = (uint32_t)ctl.config().intervalo_s * 1000UL;
@@ -2006,18 +2037,15 @@ static void gestionarEnvio() {
   while (redRecibir(rx)) procesarRespuesta(rx);
 
   uint32_t ahora = millis();
-  if (plan.vencioEnVuelo(ahora)) {                              // la tarea de red no contesta
-    Serial.println("RED: sin respuesta de la tarea de red (30 s)");
+  if (plan.vencioEnVuelo(ahora)) {
+    Serial.println("RED: sin respuesta (30 s)");
     plan.respuesta(ahora, -99, false, 0, intervalo_ms);
   }
-  /* Si la tarea de red lleva minutos sin devolver nada, esta trabada: se reinicia el nodo
-     (la bomba queda apagada; al volver se aplica la espera conservadora). */
-  if (entregas_sin_rx && desde(ahora, t_entrega_ms) >= (uint32_t)REINICIO_RED_TRABADA_S * 1000UL) {
-    Serial.println("RED: tarea de red trabada; reiniciando el nodo por seguridad");
-    sensores::releAplicar(false);
-    delay(100);
-    ESP.restart();
-  }
+
+  /* SIN RED CON LA BOMBA ENCENDIDA. Un POST bloquea el bucle hasta HTTP_TIMEOUT_MS y el corte de la
+     bomba por tiempo debe evaluarse en cada vuelta. Los eventos y acuses quedan en cola (hasta 8) y
+     viajan apenas la bomba se apaga (un riego dura como maximo 30 s). */
+  if (ctl.bombaEncendida()) return;
 
   const bool listo = ultima.hay && redConectada();
   const bool novedades = hayNovedades();
@@ -2029,12 +2057,12 @@ static void gestionarEnvio() {
        dashboard son recientes. Las tramas POR EVENTO (bomba, acuses) salen de inmediato. */
     if (!novedades) {
       if (ronda.activa) return;
-      if (!ctl.bombaEncendida() && desde(ahora, t_ultima_muestra) > 10000UL) { iniciarRonda(); return; }
+      if (desde(ahora, t_ultima_muestra) > 10000UL) { iniciarRonda(); return; }
     }
     armarTrama();
-    if (msg_pend.n > 0 && redEnviar(msg_pend)) entregada();
+    if (msg_pend.n > 0 && redEnviar(msg_pend)) plan.entregada(millis());
   } else if (a == envio::REENVIAR) {
-    if (redEnviar(msg_pend)) entregada();
+    if (redEnviar(msg_pend)) plan.entregada(millis());
   }
 }
 
@@ -2072,25 +2100,10 @@ static void consolaSerie() {
 #endif
 
 /* ---------------------------------------------------------------------
-   WATCHDOG: si loop() se cuelga mas de WDT_TIMEOUT_S, el ESP32 se reinicia (y la bomba queda apagada).
-   Compatibilidad: el core 3.x (ESP-IDF 5) ya inicializa el watchdog de tareas, por eso se
-   reconfigura con esp_task_wdt_config_t; el core 2.x (ESP-IDF 4) usa esp_task_wdt_init(segundos, panico).
-   --------------------------------------------------------------------- */
-static void iniciarWatchdog() {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  esp_task_wdt_config_t cfg;
-  cfg.timeout_ms = (uint32_t)WDT_TIMEOUT_S * 1000UL;
-  cfg.idle_core_mask = (1U << portNUM_PROCESSORS) - 1U;        // vigila tambien las tareas IDLE de cada nucleo
-  cfg.trigger_panic = true;
-  if (esp_task_wdt_reconfigure(&cfg) != ESP_OK) esp_task_wdt_init(&cfg);
-#else
-  esp_task_wdt_init(WDT_TIMEOUT_S, true);
-#endif
-  esp_task_wdt_add(NULL);                                       // suscribe la tarea de loop()
-}
-
-/* ---------------------------------------------------------------------
    SETUP / LOOP
+   El ESP8266 trae dos perros guardianes (por software ~3 s y por hardware ~8 s): reinician la placa
+   si el bucle deja de ceder el control. Aqui todas las esperas usan delay(), que lo cede, y
+   ESP.wdtFeed() lo alimenta en cada vuelta.
    --------------------------------------------------------------------- */
 void setup() {
   /* 1) LO PRIMERO: la bomba apagada. */
@@ -2098,14 +2111,15 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
+  EEPROM.begin(sizeof(CfgFlash));
 
   /* 2) Motivo del reinicio. Si el nodo se reinicio con la bomba encendida, se parte con la espera
         activa para no repetir el riego de inmediato (evita un bucle de reinicios con la bomba). */
-  const esp_reset_reason_t motivo = esp_reset_reason();
-  const bool por_wdt = (motivo == ESP_RST_TASK_WDT || motivo == ESP_RST_INT_WDT || motivo == ESP_RST_WDT);
-  const bool interrumpido = (motivo != ESP_RST_POWERON) && rtc_magia == RTC_MAGIA && rtc_bomba_activa == 1;
-  rtc_magia = RTC_MAGIA;
-  rtc_bomba_activa = 0;
+  const rst_info* ri = ESP.getResetInfoPtr();
+  const uint32_t motivo = ri ? ri->reason : (uint32_t)REASON_DEFAULT_RST;
+  const bool por_wdt = (motivo == REASON_WDT_RST || motivo == REASON_SOFT_WDT_RST || motivo == REASON_EXCEPTION_RST);
+  const bool interrumpido = (motivo != REASON_DEFAULT_RST) && rtcBombaEstabaActiva();
+  rtcGuardarBomba(false);
   if (por_wdt) tramas_aviso_wdt = TRAMAS_AVISO_WDT;
 
   ctl.iniciar(millis(), interrumpido);
@@ -2114,14 +2128,13 @@ void setup() {
 #endif
   cargarConfig();
   sensores::iniciar();
-  boot_id = esp_random();
-  iniciarWatchdog();
+  boot_id = RANDOM_REG32;                             // generador de numeros aleatorios por hardware
   redIniciar();
   plan.iniciar(millis());
 
   Serial.println();
   Serial.println("=============================================");
-  Serial.printf(" Invernadero: nodo %s  (firmware %s)\n", NODO_MASTIL ? "del mastil" : "de riego", FW_VERSION);
+  Serial.printf(" Invernadero: nodo %s  (firmware %s, ESP8266)\n", NODO_MASTIL ? "del mastil" : "de riego", FW_VERSION);
   Serial.println("=============================================");
   if (interrumpido) Serial.println("AVISO: el nodo se reinicio con la bomba encendida; espera de seguridad activa");
   if (por_wdt)      Serial.println("AVISO: reinicio por watchdog");
@@ -2132,7 +2145,7 @@ void setup() {
 }
 
 void loop() {
-  esp_task_wdt_reset();
+  ESP.wdtFeed();
 
   /* Corte de seguridad: SIEMPRE lo primero, en cada vuelta. */
   ctl.tick(millis());
@@ -2146,7 +2159,8 @@ void loop() {
     if (!primera_muestra || desde(millis(), t_ultima_muestra) >= periodo_ms || ctl.quiereMuestraYa()) iniciarRonda();
   }
 
-  /* Red (no bloquea: solo mueve mensajes entre colas). */
+  /* Red: mantiene el WiFi (sin bloquear) y envia/recibe tramas. Con la bomba encendida no hace POST. */
+  redMantener();
   gestionarEnvio();
 
 #if CONSOLA_SERIAL

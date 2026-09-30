@@ -20,8 +20,9 @@ y un **dashboard web en TypeScript** con control de acceso por rol.
 
 | Carpeta | Qué es |
 |---|---|
-| `firmware/nodo_invernadero_unico/` | **El firmware en UN solo archivo `.ino`** (para Arduino IDE, sin depender de otros archivos): DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Es la versión recomendada para cargar en la placa. |
-| `firmware/nodo_invernadero/` | El mismo firmware dividido en módulos (es la fuente del archivo único y tiene pruebas de host). Guía completa en [`docs/hardware.md`](docs/hardware.md). |
+| `firmware/nodo_invernadero_unico/` | **El firmware para ESP8266 (NodeMCU, D1 mini) en UN solo archivo `.ino`**, para Arduino IDE y sin depender de otros archivos: DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Es el que se carga en la placa. |
+| `firmware/nodo_invernadero_unico_esp32/` | El mismo firmware de un solo archivo para **ESP32** (DevKit V1 o Heltec V2). |
+| `firmware/nodo_invernadero/` | La versión modular de ESP32 (la fuente de la lógica compartida, con pruebas de host). Guía completa en [`docs/hardware.md`](docs/hardware.md). |
 | `dashboard/` | Aplicación web **Next.js 16 + React 19 + TypeScript estricto**: API de recepción de los nodos, paneles por rol, gráficos, alertas, órdenes de riego, bitácora. |
 | `supabase/migrations/` | Esquema SQL (PostgreSQL 17): tablas, permisos mínimos, bitácora inmutable. |
 | `docs/` | [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`hardware.md`](docs/hardware.md), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
@@ -66,7 +67,8 @@ levanta el servidor de desarrollo; la versión de producción es `npm run build`
   `--add I11=<token>` para simular un invernadero creado desde el panel.
   `npm run demo` usa `--fast`: fija «Reporte del nodo» en 15 s para ver alertas en minutos y lo **restaura a 300 s al salir con Ctrl+C**
   (si cierras la terminal a la fuerza, vuelve a dejarlo en 300 s desde el panel de umbrales de cada invernadero).
-* **Con un ESP32 real (Arduino IDE)**: `npm run dev:lan`, abre `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` y completa su bloque
+* **Con una placa real (Arduino IDE)**: `npm run dev:lan`, abre `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` (ESP8266; para ESP32,
+  `nodo_invernadero_unico_esp32`) y completa su bloque
   «CONFIGURACION DEL USUARIO»: WiFi, la URL `http://<IP-de-tu-PC>:3000` y el token del nodo. El token de un invernadero **nuevo** se muestra una
   sola vez al crearlo en *Invernaderos → Nuevo invernadero*; los de ejemplo están en `dashboard/.demo-devices.json` (ver [`docs/hardware.md`](docs/hardware.md)).
 

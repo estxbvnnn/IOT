@@ -4,6 +4,10 @@ Guía del nodo ESP32 (`firmware/nodo_invernadero`): componentes, conexiones, cal
 Es la evolución del «Código unificado» (sección 17 del informe) y se apoya en las notas de la clase
 (fotografía): DHT22, sensor de humedad YL-38 con sus rangos de 0 a 1023 y la mini bomba de agua sumergible.
 
+> **¿Tiene una placa ESP8266 (NodeMCU, Wemos/LOLIN D1 mini)?** Use `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino`
+> (un solo archivo, sin `secrets.h`) y las conexiones de [la sección ESP8266](#versión-esp8266-nodemcu--d1-mini). El resto de esta
+> guía (calibración, bandas del YL-38, bomba por relé, pruebas) vale igual para las dos placas.
+
 > **Estado de la verificación.** El firmware **compila sin advertencias** para las dos placas y sus variantes
 > (ver [Tamaño del firmware](#tamaño-del-firmware)), y la lógica de seguridad tiene **70 pruebas automáticas**
 > (`firmware/test`). **No se ha probado sobre hardware real**: ningún dato de esta guía sobre el comportamiento
@@ -21,6 +25,40 @@ Es la evolución del «Código unificado» (sección 17 del informe) y se apoya 
 
 Sin `secrets.h` (o con los valores de ejemplo) el nodo **no se conecta a nada**, pero riega de forma autónoma y
 muestra todo por el Monitor Serie. Sirve para probar el circuito antes de tener red.
+
+---
+
+## Versión ESP8266 (NodeMCU / D1 mini)
+
+Archivo: `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino`. Pasos en Arduino IDE: URL del gestor de placas
+`https://arduino.esp8266.com/stable/package_esp8266com_index.json`, instalar **esp8266 by ESP8266 Community** (compilado con la 3.1.2),
+las bibliotecas del [paso 2](#instalación-y-flasheo), editar el bloque «CONFIGURACION DEL USUARIO» y elegir la placa
+*NodeMCU 1.0 (ESP-12E Module)* o *LOLIN(WEMOS) D1 R2 & mini*.
+
+| Componente | Pin del componente | Pin de la placa |
+|---|---|---|
+| DHT22 | VCC / DATA / GND | 3V3 / **D5** (GPIO14) / GND, con 10 kΩ entre DATA y 3V3 |
+| YL-38 | VCC / A0 / GND | **D7** (GPIO13, solo se energiza al medir) / **A0** / GND |
+| Relé de la bomba | VCC / IN / GND | VIN (5 V) / **D6** (GPIO12) / GND (bomba con fuente propia) |
+| BH1750 (opcional) | VCC / SDA / SCL / GND | 3V3 / **D2** (GPIO4) / **D1** (GPIO5) / GND |
+| LED indicador | — | el de la placa (GPIO2 = D4, se enciende con LOW) |
+
+Se evitaron los pines de arranque (GPIO0 = D3, GPIO2 = D4 salvo el LED, GPIO15 = D8) para que el relé no se active al encender.
+
+**Diferencias con el ESP32 (y por qué):**
+
+| Tema | ESP32 | ESP8266 |
+|---|---|---|
+| Red | Tarea en el núcleo 0: el bucle nunca espera | Un solo núcleo: un POST bloquea el bucle, así que **no se hace red con la bomba encendida** (eventos en cola; salen al apagarse) |
+| Entradas analógicas | Varias en ADC1 | **Solo A0**: suelo, o anemómetro en el nodo del mástil (nunca ambos) |
+| ADC | 12 bits, se lleva a 10 | 10 bits nativos (0–1023, la escala de la imagen); NodeMCU/D1 mini lo entregan de 0 a 3,2 V |
+| Configuración guardada | NVS (`Preferences`) | Flash emulando EEPROM, con suma de control; se escribe solo cuando el servidor la cambia |
+| Reinicio con bomba encendida | Memoria RTC (`RTC_NOINIT_ATTR`) | Memoria RTC de usuario (`ESP.rtcUserMemory*`) |
+| Corriente por GPIO | hasta ~40 mA (se sube al máximo) | ~12 mA: si el YL-38 consume más, aliméntelo con un transistor |
+| HTTPS | TLS con `WiFiClientSecure` | BearSSL: gasta mucha RAM; para pruebas use `http://` en la LAN. Con `CA_ROOT_PEM` necesita hora NTP |
+| Bandas de la imagen, reglas de riego, protocolo, reintentos | `riego.h`, `envio.h`, `protocolo.h` | **Los mismos archivos** (con sus pruebas de host) |
+
+Compilado sin errores para `nodemcuv2` y `d1_mini` (core 3.1.2, ArduinoJson 7.4.3, DHT 1.4.7). **No probado en una placa real.**
 
 ---
 
@@ -217,9 +255,10 @@ punto débil del diseño; un sensor capacitivo es la ampliación natural.
 Versiones con las que se verificó la compilación: **core esp32 (Arduino-ESP32) 3.3.12**, **DHT sensor library 1.4.7**,
 **Adafruit Unified Sensor 1.1.15**, **ArduinoJson 7.4.3**.
 
-> **Atajo para Arduino IDE:** `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` es este mismo firmware en **un solo
+> **Atajo para Arduino IDE con ESP32:** `firmware/nodo_invernadero_unico_esp32/nodo_invernadero_unico_esp32.ino` es este mismo firmware en **un solo
 > archivo** (no usa `secrets.h`: WiFi, servidor y token se escriben en su bloque «CONFIGURACION DEL USUARIO»). Con él, los pasos
 > 4 y 6 de abajo se reducen a abrir ese archivo y editar ese bloque. Se genera desde `nodo_invernadero/` con `npm run firmware:unico`.
+> Para **ESP8266** el archivo es `nodo_invernadero_unico/nodo_invernadero_unico.ino` (ver [Versión ESP8266](#versión-esp8266-nodemcu--d1-mini)).
 
 ### Arduino IDE 2.x
 
