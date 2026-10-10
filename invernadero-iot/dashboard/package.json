@@ -19,6 +19,8 @@
     "setup:env": "tsx scripts/setup-env.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:seed": "tsx scripts/db-seed.ts",
+    "db:superadmin": "tsx scripts/db-superadmin.ts",
+    "gateway": "tsx scripts/gateway.ts",
     "db:retention": "tsx scripts/db-retention.ts",
     "db:reset-data": "tsx scripts/db-reset-data.ts",
     "simulate": "tsx scripts/simulate.ts",

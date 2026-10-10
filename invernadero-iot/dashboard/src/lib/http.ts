@@ -40,5 +40,10 @@ export async function readTextCapped(req: Request, maxBytes: number): Promise<st
 export const NO_STORE = { 'Cache-Control': 'no-store' } as const
 
 export function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return Response.json(body, { status, headers: { ...NO_STORE, ...headers } })
+  // Con Content-Length (y no «Transfer-Encoding: chunked») para que los nodos ESP8266, con poca memoria, lean el cuerpo completo.
+  const text = JSON.stringify(body)
+  return new Response(text, {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(text)), ...NO_STORE, ...headers },
+  })
 }

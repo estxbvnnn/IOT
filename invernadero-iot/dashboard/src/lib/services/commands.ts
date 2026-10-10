@@ -1,6 +1,6 @@
 import type { Db } from '../db/types'
 import { inTransaction } from '../db/types'
-import { type Actor, assertCanOnGreenhouse, canOnGreenhouse } from '../rbac'
+import { type Actor, assertCanOnGreenhouse, bypassesSafeguards, canOnGreenhouse, isAdminRole } from '../rbac'
 import { verifyPassword } from '../auth/password'
 import { audit } from './audit'
 
@@ -129,14 +129,37 @@ export async function requestIrrigation(db: Db, actor: Actor, input: RequestIrri
        where n.greenhouse_id = ${input.greenhouseId}
        for update of n`
     if (!n || !n.enabled) throw new CommandError('no_node', 'Este invernadero no tiene un nodo habilitado.')
-    if (input.durationS > n.pump_max_s) {
+    const superuser = bypassesSafeguards(actor.role)
+    // El súper administrador no tiene tope del servidor (el nodo igual acorta a su propio máximo).
+    if (!superuser && input.durationS > n.pump_max_s) {
       throw new CommandError('invalid', `El máximo de riego configurado para ${n.code} es ${n.pump_max_s} s.`)
     }
     await expireStale(tx, n.node_id, now)
+    if (superuser) {
+      // Sin esperar: lo que estuviera pendiente de entregar se reemplaza por esta orden.
+      await tx`
+        update iot.commands set status = 'cancelled', result_detail = 'Reemplazada por una orden de un súper administrador'
+         where node_id = ${n.node_id} and status in ('awaiting_confirmation', 'queued')`
+    }
     const [busy] = await tx<{ id: string }[]>`
       select id from iot.commands
        where node_id = ${n.node_id} and status in ('awaiting_confirmation', 'queued', 'delivered') limit 1`
     if (busy) throw new CommandError('busy', 'Ya hay una orden en curso para este invernadero. Espera a que termine o cancélala.')
+
+    if (superuser) {
+      // Sin confirmación en dos pasos: queda directamente en cola para el próximo reporte del nodo.
+      const [interval] = await tx<{ interval_s: number }[]>`select interval_s from iot.thresholds where greenhouse_id = ${input.greenhouseId}`
+      const expiresAt = new Date(now.getTime() + deliveryWindowS(interval?.interval_s ?? 0) * 1000)
+      const [row] = await tx<{ id: string }[]>`
+        insert into iot.commands (greenhouse_id, node_id, type, duration_s, source, status, requested_by, confirmed_by, created_at, confirmed_at, expires_at)
+        values (${input.greenhouseId}, ${n.node_id}, 'irrigate', ${input.durationS}, 'manual', 'queued', ${actor.id}, ${actor.id}, ${now}, ${now}, ${expiresAt})
+        returning id`
+      await audit(tx, {
+        actorId: actor.id, actorLabel: actor.email, actorRole: actor.role, action: 'command.request',
+        target: `greenhouse:${input.greenhouseId}`, detail: { commandId: row!.id, code: n.code, durationS: input.durationS, sinConfirmacion: true }, ip: input.ip ?? null,
+      })
+      return loadCommand(tx, row!.id)
+    }
 
     const confirmBy = new Date(now.getTime() + CONFIRM_WINDOW_S * 1000)
     const [row] = await tx<{ id: string }[]>`
@@ -251,7 +274,7 @@ export async function cancelCommand(db: Db, actor: Actor, commandId: string, ip:
   const [c] = await db<{ requested_by: string | null; greenhouse_id: number }[]>`
     select requested_by, greenhouse_id from iot.commands where id = ${commandId}`
   if (!c) throw new CommandError('not_found', 'La orden no existe.')
-  const owns = c.requested_by === actor.id || actor.role === 'admin'
+  const owns = c.requested_by === actor.id || isAdminRole(actor.role)
   if (!owns || !canOnGreenhouse(actor, 'irrigation:command', c.greenhouse_id)) {
     throw new CommandError('forbidden', 'No puedes cancelar esta orden.')
   }

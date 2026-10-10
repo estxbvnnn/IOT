@@ -27,6 +27,8 @@ export interface ThresholdsDTO {
   humAirMax: number
   pumpMaxS: number
   pumpWaitS: number
+  /** Riego automático activado: si es false el nodo no inicia riegos por humedad (el manual sigue funcionando). */
+  autoEnabled: boolean
   intervalS: number
   version: number
   updatedAt: string

@@ -1,0 +1,23 @@
+# Para que el nodo arranque solo con la Raspberry Pi 5 y se reinicie si se cae.
+#   1) Copie este archivo:   sudo cp nodo_pi5.service /etc/systemd/system/
+#   2) Edite las rutas, el usuario, SERVER_URL y DEVICE_TOKEN de abajo.
+#   3) sudo systemctl daemon-reload && sudo systemctl enable --now nodo_pi5
+#   Ver el estado:  journalctl -u nodo_pi5 -f
+[Unit]
+Description=Nodo del invernadero (Raspberry Pi 5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/nodo_pi5
+Environment=SERVER_URL=http://IP_DEL_PC:3000
+Environment=DEVICE_TOKEN=PEGAR_AQUI_EL_TOKEN_DEL_NODO
+ExecStart=/home/pi/venv-nodo/bin/python /home/pi/nodo_pi5/nodo_pi5.py
+Restart=always
+RestartSec=5
+# Al detener el servicio la bomba se apaga (el programa la apaga al recibir SIGTERM).
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

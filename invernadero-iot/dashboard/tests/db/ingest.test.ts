@@ -3,6 +3,24 @@ import { frameBuilder, inRollback, plus, send, T0, tokenFor } from './helpers'
 
 const GH = 3 // I3
 
+describe('POST /api/ingest · sensor de suelo desconectado', () => {
+  it('suelo_raw null + falla «suelo» (lo que envía el nodo sin YL-38): bloq_sensor, sin % de humedad y alerta de falla', async () => {
+    await inRollback(async (tx) => {
+      const token = await tokenFor(tx, GH)
+      await tx`update iot.alerts set status = 'resolved', resolved_at = now(), resolved_reason = 'manual' where greenhouse_id = ${GH} and status <> 'resolved'`
+      const r = await send(tx, token, frameBuilder()({ suelo_raw: null, est: 'bloq_sensor', fallas: ['suelo'] }), T0)
+      expect(r.status).toBe(200)
+      const [st] = await tx<{ pump_state: string; soil_raw: number | null; soil_pct: number | null; faults: string[] }[]>`
+        select s.pump_state, s.soil_raw, s.soil_pct, s.faults from iot.node_state s join iot.nodes n on n.id = s.node_id where n.greenhouse_id = ${GH}`
+      expect(st).toMatchObject({ pump_state: 'bloq_sensor', soil_raw: null, soil_pct: null, faults: ['suelo'] })
+      const alerts = await tx<{ type: string; status: string }[]>`select type, status from iot.alerts where greenhouse_id = ${GH}`
+      expect(alerts.find((a) => a.type === 'sensor_fault')?.status).toBe('open')
+      // Un sensor desconectado NO debe verse como «suelo saturado».
+      expect(alerts.find((a) => a.type === 'soil_saturated')).toBeUndefined()
+    })
+  })
+})
+
 describe('POST /api/ingest · autenticación y validación', () => {
   it('rechaza sin token, con token inválido o de otro formato (401)', async () => {
     await inRollback(async (tx) => {

@@ -119,7 +119,8 @@ El servidor procesa los eventos de forma **idempotente**: un `pump_on` con un ri
     "suelo_sat": 300,
     "temp_max": 40,
     "riego_max_s": 30,
-    "espera_s": 300
+    "espera_s": 300,
+    "auto": 1
   },
   "ordenes": [
     { "id": "0b6c1a52-7c1e-4f0e-9a0c-2f3e7a9d1c11", "tipo": "riego", "dur_s": 20, "vence_s": 240 }
@@ -194,6 +195,7 @@ guarda en su memoria no volátil (NVS) para seguir operando sin servidor. Aun as
 | `temp_max` (no iniciar riego automático sobre esta °C) | 40 | 30 … 60 |
 | `riego_max_s` (corte duro por ciclo) | 30 | 5 … 120 |
 | `espera_s` (espera entre riegos) | 300 | 60 … 3600 |
+| `auto` (riego automático: `1` activado, `0` desactivado) | 1 | `0`/`1` o `false`/`true`; opcional (si falta, el nodo conserva el valor). Con `0` el nodo no inicia riegos por humedad: el riego manual, los calendarios y «detener» siguen funcionando |
 
 Si la `cfg` recibida viola estas reglas, el nodo la **ignora completa** y conserva la anterior.
 

@@ -94,9 +94,14 @@ describe('autenticación por token y configuración', () => {
   })
 
   it('cfg de un invernadero trae los umbrales; la del mástil solo el intervalo', () => {
-    const gh = buildCfg({ kind: 'greenhouse', soil_on: 700, soil_off: 500, soil_sat: 300, temp_max: 40, pump_max_s: 30, pump_wait_s: 300, interval_s: 300, version: 4 })
-    expect(gh).toEqual({ ver: 4, intervalo_s: 300, suelo_on: 700, suelo_off: 500, suelo_sat: 300, temp_max: 40, riego_max_s: 30, espera_s: 300 })
-    const mast = buildCfg({ kind: 'mast', soil_on: null, soil_off: null, soil_sat: null, temp_max: null, pump_max_s: null, pump_wait_s: null, interval_s: null, version: null })
+    const base = { kind: 'greenhouse' as const, soil_on: 700, soil_off: 500, soil_sat: 300, temp_max: 40, pump_max_s: 30, pump_wait_s: 300, auto_enabled: true, interval_s: 300, version: 4 }
+    expect(buildCfg(base)).toEqual({ ver: 4, intervalo_s: 300, suelo_on: 700, suelo_off: 500, suelo_sat: 300, temp_max: 40, riego_max_s: 30, espera_s: 300, auto: 1 })
+    const mast = buildCfg({ kind: 'mast', soil_on: null, soil_off: null, soil_sat: null, temp_max: null, pump_max_s: null, pump_wait_s: null, auto_enabled: null, interval_s: null, version: null })
     expect(mast).toEqual({ ver: 1, intervalo_s: 60 })
+  })
+
+  it('con el riego automático desactivado la cfg lleva auto: 0', () => {
+    const cfg = buildCfg({ kind: 'greenhouse', soil_on: 700, soil_off: 500, soil_sat: 300, temp_max: 40, pump_max_s: 30, pump_wait_s: 300, auto_enabled: false, interval_s: 300, version: 5 })
+    expect(cfg.auto).toBe(0)
   })
 })

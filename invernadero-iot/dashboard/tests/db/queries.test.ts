@@ -9,6 +9,21 @@ import { T0, frameBuilder, inRollback, makeUser, plus, send, tokenFor } from './
 /** «Ahora» de las pruebas: poco después del último dato sembrado, así los nodos figuran en línea. */
 const NOW = new Date()
 
+/** Historial propio de la prueba (24 h cada 10 min + un riego) para un invernadero: no depende de datos sembrados ni de nodos reales. */
+async function seedHistory(tx: Parameters<typeof inRollback>[0] extends (tx: infer T) => unknown ? T : never, gh: number): Promise<void> {
+  const [n] = await tx<{ id: number }[]>`select id from iot.nodes where greenhouse_id = ${gh}`
+  for (let m = 24 * 60 - 20; m >= 0; m -= 10) {
+    const ts = new Date(NOW.getTime() - m * 60_000)
+    await tx`
+      insert into iot.readings (node_id, greenhouse_id, ts, temp_c, hum_air, soil_raw, soil_pct, pump_on, rssi)
+      values (${n!.id}, ${gh}, ${ts}, 24, 60, 600, 40, false, -60)`
+  }
+  const start = new Date(NOW.getTime() - 3 * 3600_000)
+  await tx`
+    insert into iot.irrigation_events (node_id, greenhouse_id, started_at, ended_at, duration_s, trigger, end_reason, soil_raw_start, soil_raw_end, water_l)
+    values (${n!.id}, ${gh}, ${start}, ${new Date(start.getTime() + 20_000)}, 20, 'auto', 'objetivo', 720, 480, 0.5)`
+}
+
 const insertAlert = (tx: Parameters<typeof inRollback>[0] extends (tx: infer T) => unknown ? T : never, gh: number | null, type: string) =>
   tx`insert into iot.alerts (greenhouse_id, type, severity, message) values (${gh}, ${type}, 'warning', ${`prueba ${type} ${gh}`}) on conflict do nothing`
 
@@ -79,7 +94,8 @@ describe('detalle del invernadero, series y exportación', () => {
       expect(await resolveGreenhouse(tx, owner.actor, 'I10')).toBe(10)
       expect(await resolveGreenhouse(tx, op.actor, 'I4')).toBe(4)
       expect(await resolveGreenhouse(tx, op.actor, 'I5')).toBeNull() // sector ajeno
-      for (const bad of ['I0x', 'i4', 'I', '4', "I4'; --", 'I100', '../etc']) expect(await resolveGreenhouse(tx, owner.actor, bad)).toBeNull()
+      expect(await resolveGreenhouse(tx, owner.actor, 'i4')).toBe(4) // la búsqueda no distingue mayúsculas (lower(code) = lower(...))
+      for (const bad of ['I0x', 'I', '4', "I4'; --", 'I100', '../etc']) expect(await resolveGreenhouse(tx, owner.actor, bad)).toBeNull()
     })
   })
 
@@ -87,15 +103,16 @@ describe('detalle del invernadero, series y exportación', () => {
     await inRollback(async (tx) => {
       const owner = await makeUser(tx, 'owner')
       const tech = await makeUser(tx, 'technician')
-      const a = await getGreenhouseSeries(tx, owner.actor, 1, '24h', NOW)
-      const b = await getGreenhouseSeries(tx, tech.actor, 1, '24h', NOW)
+      await seedHistory(tx, 2)
+      const a = await getGreenhouseSeries(tx, owner.actor, 2, '24h', NOW)
+      const b = await getGreenhouseSeries(tx, tech.actor, 2, '24h', NOW)
       expect(a.temp.length).toBeGreaterThan(20)
       expect(a.temp.length).toBeLessThanOrEqual(150) // ≤ 144 promedios de 10 min
       expect(a.rssi).toBeNull()
       expect(b.rssi?.length).toBe(b.temp.length)
       for (const [t, v] of a.soilRaw) { expect(t).toBeGreaterThan(a.from); if (v !== null) expect(v).toBeLessThanOrEqual(1023) }
       expect(a.events.length).toBeGreaterThanOrEqual(1)
-      const week = await getGreenhouseSeries(tx, owner.actor, 1, '7d', NOW)
+      const week = await getGreenhouseSeries(tx, owner.actor, 2, '7d', NOW)
       expect(week.bucketS).toBe(3600)
       expect(week.temp.length).toBeLessThanOrEqual(24 * 7 + 1)
     })
@@ -164,7 +181,7 @@ describe('alertas: alcance y reconocimiento', () => {
       }
       const admin = await makeUser(tx, 'admin')
       expect(await acknowledgeAlert(tx, admin.actor, theirs!.id, T0)).toBe(true)
-      const a = await tx<{ action: string }[]>`select action from iot.audit_log where action = 'alert.ack'`
+      const a = await tx<{ action: string }[]>`select action from iot.audit_log where action = 'alert.ack' and actor_id in (${op.id}, ${admin.id})`
       expect(a.length).toBe(2)
     })
   })
@@ -172,6 +189,9 @@ describe('alertas: alcance y reconocimiento', () => {
   it('el barrido levanta «nodo fuera de línea» (crítica en invernaderos, aviso en el mástil) y no duplica', async () => {
     await inRollback(async (tx) => {
       _resetSweepThrottle()
+      // El barrido solo mira nodos que ya reportaron: en la base real no todos lo han hecho, así que la prueba los deja a todos en línea «ahora».
+      await tx`insert into iot.node_state (node_id, ts) select id, ${NOW} from iot.nodes on conflict (node_id) do update set ts = excluded.ts`
+      await tx`update iot.alerts set status = 'resolved', resolved_at = now(), resolved_reason = 'manual' where type = 'node_offline' and status <> 'resolved'`
       const later = plus(NOW, 6 * 3600)
       const n1 = await sweepOfflineNodes(tx, later, true)
       expect(n1).toBe(11) // 10 invernaderos + mástil
@@ -190,6 +210,7 @@ describe('alertas: alcance y reconocimiento', () => {
 describe('equipos y bitácora', () => {
   it('el técnico y el administrador ven el estado de enlace; el dueño no', async () => {
     await inRollback(async (tx) => {
+      await tx`update iot.thresholds set interval_s = 300` // independiente de los ajustes que tenga hoy la base real
       const tech = await makeUser(tx, 'technician')
       const owner = await makeUser(tx, 'owner')
       const devices = await listDevices(tx, tech.actor, NOW)

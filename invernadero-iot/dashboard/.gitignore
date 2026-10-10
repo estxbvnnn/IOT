@@ -19,3 +19,6 @@ next-env.d.ts
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Pasarela de la Raspberry Pi: cola de tramas y respuestas guardadas (contienen tokens de nodos)
+.gateway/

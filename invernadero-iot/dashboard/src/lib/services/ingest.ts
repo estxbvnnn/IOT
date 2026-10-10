@@ -47,6 +47,8 @@ export interface IngestCfg {
   temp_max?: number
   riego_max_s?: number
   espera_s?: number
+  /** 1 = riego automático activado, 0 = el nodo no inicia riegos por humedad. Un firmware antiguo lo ignora. */
+  auto?: 0 | 1
 }
 
 export type IngestResult =
@@ -79,6 +81,7 @@ interface NodeRow {
   hum_air_max: number | null
   pump_max_s: number | null
   pump_wait_s: number | null
+  auto_enabled: boolean | null
   interval_s: number | null
   version: number | null
 }
@@ -106,7 +109,7 @@ async function noteAuthFailure(db: Db, ip: string | null, reason: string, now: D
 
 const num = (v: number | null | undefined): number | null => (v === undefined ? null : v)
 
-export function buildCfg(n: Pick<NodeRow, 'kind' | 'soil_on' | 'soil_off' | 'soil_sat' | 'temp_max' | 'pump_max_s' | 'pump_wait_s' | 'interval_s' | 'version'>): IngestCfg {
+export function buildCfg(n: Pick<NodeRow, 'kind' | 'soil_on' | 'soil_off' | 'soil_sat' | 'temp_max' | 'pump_max_s' | 'pump_wait_s' | 'auto_enabled' | 'interval_s' | 'version'>): IngestCfg {
   if (n.kind === 'mast' || n.soil_on === null) return { ver: 1, intervalo_s: MAST_INTERVAL_S }
   return {
     ver: n.version ?? 1,
@@ -117,6 +120,7 @@ export function buildCfg(n: Pick<NodeRow, 'kind' | 'soil_on' | 'soil_off' | 'soi
     temp_max: n.temp_max!,
     riego_max_s: n.pump_max_s!,
     espera_s: n.pump_wait_s!,
+    auto: n.auto_enabled === false ? 0 : 1,
   }
 }
 
@@ -140,7 +144,7 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
   const [node] = await db<NodeRow[]>`
     select n.id, n.kind, n.greenhouse_id, n.label, n.enabled, n.cal_dry, n.cal_wet, g.code, g.flow_lph, g.archived_at,
            t.soil_on, t.soil_off, t.soil_sat, t.temp_max, t.temp_heat, t.temp_cold, t.temp_frost,
-           t.hum_air_min, t.hum_air_max, t.pump_max_s, t.pump_wait_s, t.interval_s, t.version
+           t.hum_air_min, t.hum_air_max, t.pump_max_s, t.pump_wait_s, t.auto_enabled, t.interval_s, t.version
       from iot.nodes n
       left join iot.greenhouses g on g.id = n.greenhouse_id
       left join iot.thresholds t on t.greenhouse_id = n.greenhouse_id

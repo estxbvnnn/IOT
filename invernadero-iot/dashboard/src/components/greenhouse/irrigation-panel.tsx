@@ -31,6 +31,8 @@ export interface IrrigationPanelProps {
   greenhouse: GreenhouseSummary
   /** El usuario tiene permiso irrigation:command sobre este invernadero. */
   canCommand: boolean
+  /** Súper administrador (pruebas): la orden sale sin confirmar con contraseña y sin esperar a que el nodo esté en línea. */
+  bypass?: boolean
 }
 
 const MIN_S = 5
@@ -126,7 +128,7 @@ function AdvisoryList({ items, label, className }: { items: Advisory[]; label: s
   )
 }
 
-export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelProps) {
+export function IrrigationPanel({ greenhouse: g, canCommand, bypass = false }: IrrigationPanelProps) {
   const uid = useId()
   const maxS = g.thresholds.pumpMaxS
   const presets = useMemo(() => durationPresets(maxS), [maxS])
@@ -151,8 +153,9 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
 
   // --- Duración elegida --------------------------------------------------------------------------
   const durationS = Number(durationText.trim())
-  const durationValid = /^\d+$/.test(durationText.trim()) && durationS >= MIN_S && durationS <= maxS
-  const durationError = durationValid ? null : `Ingresa un entero entre ${MIN_S} y ${maxS} s.`
+  const limitS = maxS
+  const durationValid = /^\d+$/.test(durationText.trim()) && durationS >= MIN_S && durationS <= limitS
+  const durationError = durationValid ? null : `Ingresa un entero entre ${MIN_S} y ${limitS} s.`
 
   // --- Estado real de la bomba (del último reporte del nodo) -----------------------------------------
   const ageS = g.ageS ?? 0
@@ -189,8 +192,8 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
 
   let disabledReason: string | null = null
   if (!nodeUsable) disabledReason = 'Este invernadero no tiene un nodo habilitado.'
-  else if (!g.online) disabledReason = 'El nodo no está reportando: la orden no llegaría.'
-  else if (openOrder) disabledReason = 'Ya hay una orden en curso para este invernadero.'
+  else if (!g.online && !bypass) disabledReason = 'El nodo no está reportando: la orden no llegaría.'
+  else if (openOrder && !bypass) disabledReason = 'Ya hay una orden en curso para este invernadero.'
   const canStart = canCommand && disabledReason === null && durationValid
 
   // --- Enfoque al cambiar de paso ----------------------------------------------------------------
@@ -234,6 +237,12 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
     setBusy(null)
     if (!res.ok) {
       setDialogError(res.error)
+      return
+    }
+    // Súper administrador: la orden ya quedó en cola, no hay paso de confirmación.
+    if (res.data.status !== 'awaiting_confirmation') {
+      setActive(res.data)
+      setPhase({ step: 'track' })
       return
     }
     // La ventana de confirmación se cuenta desde ANTES de enviar: el reloj local nunca promete más tiempo del real.
@@ -331,7 +340,7 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
     <Card
       id="riego-manual"
       title="Riego manual"
-      description={canCommand ? 'Confirmación en dos pasos · el nodo corta la bomba por temporizador' : 'Solo lectura'}
+      description={canCommand ? (bypass ? 'Modo pruebas: sin confirmación · el nodo corta la bomba por temporizador' : 'Confirmación en dos pasos · el nodo corta la bomba por temporizador') : 'Solo lectura'}
     >
       <div className="flex flex-col gap-4">
         {/* Estado real */}
@@ -379,7 +388,7 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
 
         {canCommand ? (
           <div className="flex flex-col gap-3">
-            <fieldset disabled={!nodeUsable || !g.online || openOrder} className="min-w-0">
+            <fieldset disabled={!nodeUsable || (!bypass && (!g.online || openOrder))} className="min-w-0">
               <legend className="label">Duración del riego</legend>
               <div className="flex flex-wrap items-center gap-2">
                 {presets.map((p) => (
@@ -397,7 +406,7 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
                 <span className="mx-1 text-[12px] text-ink-3" aria-hidden>o</span>
                 <label htmlFor={`${uid}-custom`} className="sr-only">Otra duración en segundos</label>
                 <input
-                  id={`${uid}-custom`} type="number" inputMode="numeric" min={MIN_S} max={maxS} step={1}
+                  id={`${uid}-custom`} type="number" inputMode="numeric" min={MIN_S} max={limitS} step={1}
                   className="input w-[78px]" value={durationText} onChange={(e) => setDurationText(e.target.value)}
                   aria-invalid={!durationValid} aria-describedby={`${uid}-dur-hint`}
                 />
@@ -417,7 +426,7 @@ export function IrrigationPanel({ greenhouse: g, canCommand }: IrrigationPanelPr
                 Regar ahora
               </button>
               {g.pumpOn && (
-                <button type="button" className="btn btn-danger" onClick={() => void onStop()} disabled={busy !== null || openOrder}>
+                <button type="button" className="btn btn-danger" onClick={() => void onStop()} disabled={busy !== null || (openOrder && !bypass)}>
                   {busy === 'stop' ? <Loader2 size={16} className="motion-safe:animate-spin" aria-hidden /> : <Square size={15} aria-hidden />}
                   Detener bomba
                 </button>

@@ -38,7 +38,18 @@ describe('gestión de usuarios (solo administrador)', () => {
       await expect(createUser(tx, admin.actor, { name: 'A', email: 'no-es-correo', role: 'owner', greenhouseIds: [] })).rejects.toBeInstanceOf(ValidationError)
       await expect(createUser(tx, admin.actor, { name: 'Ana Soto', email: admin.email, role: 'owner', greenhouseIds: [] })).rejects.toMatchObject({ fieldErrors: { email: expect.stringMatching(/Ya existe/) } })
       // @ts-expect-error rol inexistente a propósito
-      await expect(createUser(tx, admin.actor, { name: 'Ana Soto', email: 'x@y.cl', role: 'superadmin', greenhouseIds: [] })).rejects.toBeInstanceOf(ValidationError)
+      await expect(createUser(tx, admin.actor, { name: 'Ana Soto', email: 'x@y.cl', role: 'root', greenhouseIds: [] })).rejects.toBeInstanceOf(ValidationError)
+    })
+  })
+
+  it('solo un súper administrador puede crear otro súper administrador (sin escalar privilegios)', async () => {
+    await inRollback(async (tx) => {
+      const admin = await makeUser(tx, 'admin')
+      await expect(createUser(tx, admin.actor, { name: 'Ana Soto', email: 'sa1@y.cl', role: 'superadmin', greenhouseIds: [] })).rejects.toBeInstanceOf(ForbiddenError)
+      const root = await makeUser(tx, 'superadmin')
+      const { user } = await createUser(tx, root.actor, { name: 'Ana Soto', email: 'sa2@y.cl', role: 'superadmin', greenhouseIds: [] })
+      expect(user.role).toBe('superadmin')
+      await expect(updateUserAccess(tx, admin.actor, user.id, { role: 'owner', greenhouseIds: [] })).rejects.toBeInstanceOf(ForbiddenError)
     })
   })
 
@@ -80,7 +91,7 @@ describe('gestión de usuarios (solo administrador)', () => {
       const a = await makeUser(tx, 'admin')
       const b = await makeUser(tx, 'admin')
       // Solo A y B quedan como administradores activos.
-      await tx`update iot.app_users set is_active = false where role = 'admin' and id not in (${a.id}, ${b.id})`
+      await tx`update iot.app_users set is_active = false where role in ('admin', 'superadmin') and id not in (${a.id}, ${b.id})`
       await expect(setUserActive(tx, a.actor, a.id, false)).rejects.toMatchObject({ message: expect.stringMatching(/propia cuenta/) })
       // Con dos administradores activos, A puede desactivar a B: queda A como único administrador activo.
       await setUserActive(tx, a.actor, b.id, false)
@@ -147,6 +158,42 @@ describe('umbrales de riego (agrónomo)', () => {
       expect(a).toMatchObject({ actor_label: agro.email, ip: '203.0.113.5' })
       expect(a!.detail.changes.soilOn).toEqual({ from: 700, to: 650 })
       expect(Object.keys(a!.detail.changes).sort()).toEqual(['pumpMaxS', 'soilOff', 'soilOn'])
+    })
+  })
+
+  it('el riego automático se activa y desactiva: viaja al nodo en cfg.auto y queda en la bitácora', async () => {
+    await inRollback(async (tx) => {
+      const agro = await makeUser(tx, 'agronomist')
+      const token = await tokenFor(tx, GH)
+      const f = frameBuilder()
+      const r0 = await send(tx, token, f(), T0)
+      expect(r0.status === 200 && r0.body.cfg).toMatchObject({ auto: 1 }) // por defecto activado
+
+      const off = await updateThresholds(tx, agro.actor, GH, { autoEnabled: false }, '203.0.113.5', plus(T0, 5))
+      expect(off.autoEnabled).toBe(false)
+      const r1 = await send(tx, token, f(), plus(T0, 10))
+      expect(r1.status === 200 && r1.body.cfg).toMatchObject({ auto: 0, suelo_on: 700 }) // lo demás no cambia
+
+      const on = await updateThresholds(tx, agro.actor, GH, { autoEnabled: true }, null, plus(T0, 15))
+      expect(on.autoEnabled).toBe(true)
+      expect(on.version).toBeGreaterThan(off.version)
+      const r2 = await send(tx, token, f(), plus(T0, 20))
+      expect(r2.status === 200 && r2.body.cfg).toMatchObject({ auto: 1 })
+
+      const acts = await tx<{ detail: { changes: Record<string, { from: boolean; to: boolean }> } }[]>`
+        select detail from iot.audit_log where action = 'thresholds.update' order by id desc limit 2`
+      expect(acts[1]!.detail.changes.autoEnabled).toEqual({ from: true, to: false })
+    })
+  })
+
+  it('solo quien puede editar umbrales cambia el riego automático (el operador y el técnico no)', async () => {
+    await inRollback(async (tx) => {
+      for (const role of ['owner', 'operator', 'technician'] as const) {
+        const u = await makeUser(tx, role, { greenhouseIds: [GH] })
+        await expect(updateThresholds(tx, u.actor, GH, { autoEnabled: false })).rejects.toBeInstanceOf(ForbiddenError)
+      }
+      const root = await makeUser(tx, 'superadmin')
+      await expect(updateThresholds(tx, root.actor, GH, { autoEnabled: false })).resolves.toMatchObject({ autoEnabled: false })
     })
   })
 

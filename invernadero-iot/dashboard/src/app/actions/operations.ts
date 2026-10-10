@@ -73,6 +73,17 @@ export async function updateThresholdsAction(greenhouseId: number, patch: unknow
   return res
 }
 
+/** Activa o desactiva el riego AUTOMÁTICO del invernadero (permiso thresholds:edit). Lo manual no se toca. */
+export async function setAutoIrrigationAction(greenhouseId: number, enabled: boolean): Promise<ActionResult<boolean>> {
+  const user = await requireUser()
+  const g = ghId.safeParse(greenhouseId)
+  if (!g.success || typeof enabled !== 'boolean') return fail('Datos inválidos.')
+  const meta = await getRequestMeta()
+  const res = await run(async () => (await updateThresholds(getDb(), user, g.data, { autoEnabled: enabled }, meta.ip)).autoEnabled)
+  if (res.ok) refresh()
+  return res
+}
+
 export async function createScheduleAction(greenhouseId: number, input: unknown): Promise<ActionResult<ScheduleDTO>> {
   const user = await requireUser()
   const g = ghId.safeParse(greenhouseId)

@@ -26,7 +26,7 @@ interface GhRow {
   cooldown_s: number | null; faults: string[] | null
   soil_on: number; soil_off: number; soil_sat: number; temp_max: number; temp_heat: number; temp_cold: number
   temp_frost: number; hum_air_min: number; hum_air_max: number; pump_max_s: number; pump_wait_s: number
-  interval_s: number; version: number; updated_at: Date
+  interval_s: number; auto_enabled: boolean; version: number; updated_at: Date
 }
 
 /** Punto de referencia de la subestación (mástil central) para las distancias. */
@@ -60,7 +60,7 @@ async function loadGreenhouseSummaries(db: Db, ids: readonly number[] | null, no
              n.id as node_id, n.enabled,
              s.ts, s.temp_c, s.hum_air, s.soil_raw, s.soil_pct, s.light_lux, s.pump_on, s.pump_state, s.pump_run_s, s.cooldown_s, s.faults,
              t.soil_on, t.soil_off, t.soil_sat, t.temp_max, t.temp_heat, t.temp_cold, t.temp_frost, t.hum_air_min, t.hum_air_max,
-             t.pump_max_s, t.pump_wait_s, t.interval_s, t.version, t.updated_at
+             t.pump_max_s, t.pump_wait_s, t.interval_s, t.auto_enabled, t.version, t.updated_at
         from iot.greenhouses g
         join iot.thresholds t on t.greenhouse_id = g.id
         left join iot.nodes n on n.greenhouse_id = g.id
@@ -124,7 +124,7 @@ async function loadGreenhouseSummaries(db: Db, ids: readonly number[] | null, no
       faults: r.faults ?? [], openAlerts: al, thresholds: toThresholdsDTO({
         soil_on: r.soil_on, soil_off: r.soil_off, soil_sat: r.soil_sat, temp_max: r.temp_max, temp_heat: r.temp_heat,
         temp_cold: r.temp_cold, temp_frost: r.temp_frost, hum_air_min: r.hum_air_min, hum_air_max: r.hum_air_max,
-        pump_max_s: r.pump_max_s, pump_wait_s: r.pump_wait_s, interval_s: r.interval_s, version: r.version, updated_at: r.updated_at,
+        pump_max_s: r.pump_max_s, pump_wait_s: r.pump_wait_s, interval_s: r.interval_s, auto_enabled: r.auto_enabled, version: r.version, updated_at: r.updated_at,
       }),
       soilSpark: Array.from({ length: 24 }, (_, i) => buckets?.get(firstBucket + i * bucketMs) ?? null),
       irrigationsToday: irr?.n ?? 0, waterTodayL: Math.round((irr?.water ?? 0) * 10) / 10,

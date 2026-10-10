@@ -228,7 +228,7 @@ export async function createGreenhouse(db: Db, actor: Actor, raw: unknown, ip: s
               soil_on = s.soil_on, soil_off = s.soil_off, soil_sat = s.soil_sat, temp_max = s.temp_max,
               temp_heat = s.temp_heat, temp_cold = s.temp_cold, temp_frost = s.temp_frost,
               hum_air_min = s.hum_air_min, hum_air_max = s.hum_air_max, pump_max_s = s.pump_max_s,
-              pump_wait_s = s.pump_wait_s, interval_s = s.interval_s
+              pump_wait_s = s.pump_wait_s, interval_s = s.interval_s, auto_enabled = s.auto_enabled
              from iot.thresholds s
             where t.greenhouse_id = ${id} and s.greenhouse_id = ${input.copyThresholdsFrom}`.execute()
       const [, , node] = await Promise.all([insGreenhouse, insThresholds, insNode, copyThresholds])

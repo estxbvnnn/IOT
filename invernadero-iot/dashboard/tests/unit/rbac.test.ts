@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   type Actor, PERMISSIONS, ROLES, type Permission, type Role, assertCan, assertCanOnGreenhouse, can,
-  canAccessGreenhouse, canOnGreenhouse, ForbiddenError, permissionsOf, scopeOf,
+  bypassesSafeguards, canAccessGreenhouse, canOnGreenhouse, ForbiddenError, isAdminRole, permissionsOf, scopeOf,
 } from '@/lib/rbac'
 
 const actor = (role: Role, greenhouseIds: number[] = []): Actor => ({ id: 'u', email: 'u@x.cl', name: 'U', role, greenhouseIds })
@@ -10,6 +10,7 @@ const actor = (role: Role, greenhouseIds: number[] = []): Actor => ({ id: 'u', e
 const EXPECTED: Record<Role, Permission[]> = {
   owner: ['site:view', 'greenhouse:view', 'history:view', 'alerts:view', 'export:csv'],
   admin: [...PERMISSIONS],
+  superadmin: [...PERMISSIONS],
   agronomist: ['site:view', 'greenhouse:view', 'history:view', 'alerts:view', 'alerts:ack', 'thresholds:edit', 'schedules:edit', 'export:csv'],
   operator: ['site:view', 'greenhouse:view', 'history:view', 'alerts:view', 'alerts:ack', 'irrigation:command'],
   technician: ['site:view', 'greenhouse:view', 'history:view', 'alerts:view', 'devices:view', 'audit:view'],
@@ -36,12 +37,16 @@ describe('matriz de permisos por rol (informe, tabla 11)', () => {
     expect(can('technician', 'audit:view')).toBe(true)
   })
 
-  it('solo el administrador gestiona usuarios, llaves de dispositivos e invernaderos, y ve todo', () => {
+  it('solo el administrador (y el súper administrador) gestiona usuarios, llaves de dispositivos e invernaderos, y ve todo', () => {
     for (const role of ROLES) {
-      expect(can(role, 'users:manage')).toBe(role === 'admin')
-      expect(can(role, 'devices:manage')).toBe(role === 'admin')
-      expect(can(role, 'greenhouses:manage')).toBe(role === 'admin')
+      expect(can(role, 'users:manage')).toBe(isAdminRole(role))
+      expect(can(role, 'devices:manage')).toBe(isAdminRole(role))
+      expect(can(role, 'greenhouses:manage')).toBe(isAdminRole(role))
     }
+  })
+
+  it('solo el súper administrador se salta las salvaguardas de proceso', () => {
+    for (const role of ROLES) expect(bypassesSafeguards(role)).toBe(role === 'superadmin')
   })
 
   it('el agrónomo ajusta umbrales pero no ve llaves ni equipos', () => {
@@ -50,8 +55,8 @@ describe('matriz de permisos por rol (informe, tabla 11)', () => {
     expect(can('agronomist', 'devices:manage')).toBe(false)
   })
 
-  it('accionar el riego a mano solo lo hacen el operador y el administrador', () => {
-    for (const role of ROLES) expect(can(role, 'irrigation:command')).toBe(role === 'operator' || role === 'admin')
+  it('accionar el riego a mano solo lo hacen el operador y los administradores', () => {
+    for (const role of ROLES) expect(can(role, 'irrigation:command')).toBe(role === 'operator' || isAdminRole(role))
   })
 })
 

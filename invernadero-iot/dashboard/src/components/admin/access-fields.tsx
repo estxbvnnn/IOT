@@ -16,6 +16,7 @@ interface Props {
 }
 
 const ROLE_HINT: Record<Role, string> = {
+  superadmin: 'Cuenta de pruebas: todo lo del administrador, sin confirmación en dos pasos del riego ni topes de duración. Solo la asigna otro súper administrador.',
   owner: 'Solo lectura del panel ejecutivo. No configura ni acciona nada.',
   admin: 'Control total: usuarios, equipos, llaves y todo lo demás.',
   agronomist: 'Analiza el historial, ajusta umbrales y programa calendarios de riego.',

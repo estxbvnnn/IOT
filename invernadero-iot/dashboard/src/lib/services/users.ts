@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { Db } from '../db/types'
 import { inTransaction } from '../db/types'
-import { type Actor, type Role, ROLES, assertCan } from '../rbac'
+import { type Actor, type Role, ROLES, ForbiddenError, assertCan, isAdminRole } from '../rbac'
 import { hashPassword } from '../auth/password'
 import { revokeSessions } from '../auth/service'
 import { generatePassword } from '../auth/tokens'
@@ -60,6 +60,13 @@ async function setAssignments(db: Db, userId: string, role: Role, ids: readonly 
      where g.id = any(${db.array([...ids], 21)}::smallint[]) and g.archived_at is null`
 }
 
+/** El rol de súper administrador (cuenta de pruebas) solo lo concede, o lo toca, otro súper administrador: evita escalar privilegios. */
+function assertCanGrant(actor: Actor, role: Role): void {
+  if (role === 'superadmin' && actor.role !== 'superadmin') {
+    throw new ForbiddenError('Solo un súper administrador puede asignar o modificar ese rol.')
+  }
+}
+
 /** Crea una cuenta con una contraseña inicial aleatoria que se muestra UNA sola vez y debe cambiarse. */
 export async function createUser(db: Db, actor: Actor, raw: z.input<typeof createUserSchema>, ip: string | null = null): Promise<{ user: UserDTO; initialPassword: string }> {
   assertCan(actor, 'users:manage')
@@ -70,6 +77,7 @@ export async function createUser(db: Db, actor: Actor, raw: z.input<typeof creat
     throw new ValidationError(fe)
   }
   const input = parsed.data
+  assertCanGrant(actor, input.role)
   const initialPassword = generatePassword(16)
   const hash = await hashPassword(initialPassword)
   const id = await inTransaction(db, async (tx) => {
@@ -91,7 +99,7 @@ export async function createUser(db: Db, actor: Actor, raw: z.input<typeof creat
 }
 
 async function adminCount(db: Db): Promise<number> {
-  const [r] = await db<{ n: number }[]>`select count(*)::int as n from iot.app_users where role = 'admin' and is_active`
+  const [r] = await db<{ n: number }[]>`select count(*)::int as n from iot.app_users where role in ('admin', 'superadmin') and is_active`
   return r?.n ?? 0
 }
 
@@ -100,7 +108,8 @@ export async function setUserActive(db: Db, actor: Actor, userId: string, active
   if (!active && userId === actor.id) throw new ValidationError({}, 'No puedes desactivar tu propia cuenta.')
   const [u] = await db<{ role: Role; is_active: boolean; email: string }[]>`select role, is_active, email from iot.app_users where id = ${userId}`
   if (!u) throw new ValidationError({}, 'Usuario no encontrado.')
-  if (!active && u.role === 'admin' && u.is_active && (await adminCount(db)) <= 1) {
+  assertCanGrant(actor, u.role)
+  if (!active && isAdminRole(u.role) && u.is_active && (await adminCount(db)) <= 1) {
     throw new ValidationError({}, 'Debe quedar al menos un administrador activo.')
   }
   await db`update iot.app_users set is_active = ${active}, updated_at = now(), failed_logins = 0, locked_until = null where id = ${userId}`
@@ -144,10 +153,12 @@ export async function resetUserMfa(db: Db, actor: Actor, userId: string, ip: str
 export async function updateUserAccess(db: Db, actor: Actor, userId: string, input: { role: Role; greenhouseIds: number[] }, ip: string | null = null): Promise<void> {
   assertCan(actor, 'users:manage')
   if (!(ROLES as readonly string[]).includes(input.role)) throw new ValidationError({ role: 'Rol inválido.' })
+  assertCanGrant(actor, input.role)
   await inTransaction(db, async (tx) => {
     const [u] = await tx<{ role: Role; email: string }[]>`select role, email from iot.app_users where id = ${userId} for update`
     if (!u) throw new ValidationError({}, 'Usuario no encontrado.')
-    if (u.role === 'admin' && input.role !== 'admin' && (await adminCount(tx)) <= 1) {
+    assertCanGrant(actor, u.role)
+    if (isAdminRole(u.role) && !isAdminRole(input.role) && (await adminCount(tx)) <= 1) {
       throw new ValidationError({ role: 'Debe quedar al menos un administrador activo.' })
     }
     if (userId === actor.id && input.role !== actor.role) throw new ValidationError({ role: 'No puedes cambiar tu propio rol.' })

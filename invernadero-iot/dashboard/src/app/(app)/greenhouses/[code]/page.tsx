@@ -6,6 +6,7 @@ import { CommandsTable } from '@/components/greenhouse/commands-table'
 import { CurrentState } from '@/components/greenhouse/current-state'
 import { EventsTable } from '@/components/greenhouse/events-table'
 import { GreenhouseHeader } from '@/components/greenhouse/header'
+import { AutoIrrigationSwitch } from '@/components/greenhouse/auto-irrigation-switch'
 import { IrrigationPanel } from '@/components/greenhouse/irrigation-panel'
 import { RangeFilter } from '@/components/greenhouse/range-filter'
 import { SchedulesPanel } from '@/components/greenhouse/schedules-panel'
@@ -15,7 +16,7 @@ import { getDb } from '@/lib/db'
 import { requirePermission } from '@/lib/dal'
 import { GREENHOUSE_CODE_RE } from '@/lib/domain/greenhouse'
 import { RANGE_SPECS, type RangeKey, isRangeKey } from '@/lib/domain/types'
-import { can, canOnGreenhouse } from '@/lib/rbac'
+import { bypassesSafeguards, can, canOnGreenhouse } from '@/lib/rbac'
 import { listCommands } from '@/lib/services/commands'
 import { getGreenhouseDetail, resolveGreenhouse } from '@/lib/services/queries'
 import { listSchedules } from '@/lib/services/schedules'
@@ -75,8 +76,12 @@ export default async function GreenhousePage({ params, searchParams }: Props) {
         </div>
 
         <div className="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-5">
-          <div className="order-2">
-            <IrrigationPanel greenhouse={summary} canCommand={canOnGreenhouse(user, 'irrigation:command', id)} />
+          <div className="order-2 flex min-w-0 flex-col gap-5">
+            <AutoIrrigationSwitch
+              greenhouseId={id} enabled={summary.thresholds.autoEnabled} intervalS={summary.thresholds.intervalS}
+              canEdit={canOnGreenhouse(user, 'thresholds:edit', id)}
+            />
+            <IrrigationPanel greenhouse={summary} canCommand={canOnGreenhouse(user, 'irrigation:command', id)} bypass={bypassesSafeguards(user.role)} />
           </div>
           <div className="order-4">
             <ThresholdsPanel greenhouseId={id} greenhouseCode={summary.code} thresholds={summary.thresholds} canEdit={can(user.role, 'thresholds:edit')} />

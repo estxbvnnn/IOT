@@ -27,6 +27,7 @@ export const thresholdsSchema = z
     pumpMaxS: z.number().int().min(5).max(120),
     pumpWaitS: z.number().int().min(60).max(3600),
     intervalS: z.number().int().min(5).max(3600),
+    autoEnabled: z.boolean(),
   })
   .superRefine((t, ctx) => {
     if (!(t.soilSat < t.soilOff && t.soilOff < t.soilOn)) {
@@ -55,6 +56,7 @@ export const thresholdsPatchSchema = z.object({
   pumpMaxS: z.number().finite().optional(),
   pumpWaitS: z.number().finite().optional(),
   intervalS: z.number().finite().optional(),
+  autoEnabled: z.boolean().optional(),
 }).strict()
 
 export class ValidationError extends Error {
@@ -77,6 +79,7 @@ interface ThresholdRow {
   pump_max_s: number
   pump_wait_s: number
   interval_s: number
+  auto_enabled: boolean
   version: number
   updated_at: Date
 }
@@ -84,10 +87,10 @@ interface ThresholdRow {
 export const toThresholdsDTO = (r: ThresholdRow): ThresholdsDTO => ({
   soilOn: r.soil_on, soilOff: r.soil_off, soilSat: r.soil_sat, tempMax: r.temp_max, tempHeat: r.temp_heat,
   tempCold: r.temp_cold, tempFrost: r.temp_frost, humAirMin: r.hum_air_min, humAirMax: r.hum_air_max,
-  pumpMaxS: r.pump_max_s, pumpWaitS: r.pump_wait_s, intervalS: r.interval_s, version: r.version, updatedAt: r.updated_at.toISOString(),
+  pumpMaxS: r.pump_max_s, pumpWaitS: r.pump_wait_s, intervalS: r.interval_s, autoEnabled: r.auto_enabled, version: r.version, updatedAt: r.updated_at.toISOString(),
 })
 
-const FIELDS = ['soilOn', 'soilOff', 'soilSat', 'tempMax', 'tempHeat', 'tempCold', 'tempFrost', 'humAirMin', 'humAirMax', 'pumpMaxS', 'pumpWaitS', 'intervalS'] as const
+const FIELDS = ['soilOn', 'soilOff', 'soilSat', 'tempMax', 'tempHeat', 'tempCold', 'tempFrost', 'humAirMin', 'humAirMax', 'pumpMaxS', 'pumpWaitS', 'intervalS', 'autoEnabled'] as const
 
 export async function updateThresholds(
   db: Db, actor: Actor, greenhouseId: number, patch: Partial<ThresholdsInput>, ip: string | null = null, now = new Date(),
@@ -112,7 +115,7 @@ export async function updateThresholds(
         soil_on = ${v.soilOn}, soil_off = ${v.soilOff}, soil_sat = ${v.soilSat}, temp_max = ${v.tempMax},
         temp_heat = ${v.tempHeat}, temp_cold = ${v.tempCold}, temp_frost = ${v.tempFrost},
         hum_air_min = ${v.humAirMin}, hum_air_max = ${v.humAirMax}, pump_max_s = ${v.pumpMaxS},
-        pump_wait_s = ${v.pumpWaitS}, interval_s = ${v.intervalS},
+        pump_wait_s = ${v.pumpWaitS}, interval_s = ${v.intervalS}, auto_enabled = ${v.autoEnabled},
         version = version + 1, updated_at = ${now}, updated_by = ${actor.id}
        where greenhouse_id = ${greenhouseId}
       returning *`

@@ -28,6 +28,8 @@ export const SESSION_IDLE_S: Record<Role, number> = {
   owner: 2 * 3600,
   agronomist: 2 * 3600,
   operator: 8 * 3600,
+  // Cuenta de pruebas: no se cierra por inactividad (solo vence a las 12 h absolutas).
+  superadmin: SESSION_ABSOLUTE_S,
 }
 
 export interface AuthConfig {

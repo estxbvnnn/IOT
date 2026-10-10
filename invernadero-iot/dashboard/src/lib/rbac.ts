@@ -7,10 +7,11 @@
  * Ocultar un botón NUNCA reemplaza la verificación del servidor.
  */
 
-export const ROLES = ['owner', 'admin', 'agronomist', 'operator', 'technician'] as const
+export const ROLES = ['owner', 'admin', 'agronomist', 'operator', 'technician', 'superadmin'] as const
 export type Role = (typeof ROLES)[number]
 
 export const ROLE_LABELS: Record<Role, string> = {
+  superadmin: 'Súper administrador (pruebas)',
   owner: 'Dueño de la empresa',
   admin: 'Administrador de sistemas',
   agronomist: 'Ingeniero agrónomo',
@@ -47,6 +48,9 @@ const MATRIX: Record<Role, ReadonlySet<Permission>> = {
   owner: new Set<Permission>([...READ_ONLY_BASE, 'export:csv']),
   // Administrador: control total de la infraestructura.
   admin: new Set<Permission>(PERMISSIONS),
+  // Súper administrador (solo pruebas): los mismos permisos que el administrador, y además se salta las
+  // salvaguardas de proceso (ver `bypassesSafeguards`). Solo otro súper administrador puede asignar este rol.
+  superadmin: new Set<Permission>(PERMISSIONS),
   // Agrónomo: analiza el historial, ajusta umbrales y programa riego; sin acceso a llaves ni red.
   agronomist: new Set<Permission>([...READ_ONLY_BASE, 'alerts:ack', 'thresholds:edit', 'schedules:edit', 'export:csv']),
   // Operador: ve alertas y acciona el riego, solo en los sectores que tiene asignados.
@@ -62,6 +66,16 @@ export function can(role: Role, permission: Permission): boolean {
 export function permissionsOf(role: Role): readonly Permission[] {
   return PERMISSIONS.filter((p) => MATRIX[role].has(p))
 }
+
+/** Roles con control total de la infraestructura (administran usuarios, equipos e invernaderos). */
+export const isAdminRole = (role: Role): boolean => role === 'admin' || role === 'superadmin'
+
+/**
+ * Solo el súper administrador (cuenta de pruebas) se salta las salvaguardas de proceso del servidor:
+ * la confirmación en dos pasos del riego, el tope de duración y el bloqueo por orden en curso.
+ * No cambia lo que decide el NODO (espera entre riegos, suelo saturado): eso es protección del motor.
+ */
+export const bypassesSafeguards = (role: Role): boolean => role === 'superadmin'
 
 /** Roles cuyo alcance se limita a los invernaderos que se les asignan explícitamente. */
 const SCOPED_ROLES: ReadonlySet<Role> = new Set<Role>(['operator'])

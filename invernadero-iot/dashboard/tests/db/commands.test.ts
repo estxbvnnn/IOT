@@ -140,6 +140,22 @@ describe('órdenes: permisos, alcance y reglas', () => {
     })
   })
 
+  it('el súper administrador riega sin confirmar, sin tope del invernadero y reemplazando órdenes pendientes', async () => {
+    await inRollback(async (tx) => {
+      const op = await makeUser(tx, 'operator', { greenhouseIds: [GH] })
+      const root = await makeUser(tx, 'superadmin')
+      const pending = await requestIrrigation(tx, op.actor, { greenhouseId: GH, durationS: 10 }, T0)
+      // 45 s supera el máximo del invernadero (30 s) y hay una orden pendiente: al súper admin no le afecta.
+      const req = await requestIrrigation(tx, root.actor, { greenhouseId: GH, durationS: 45 }, plus(T0, 1))
+      expect(req).toMatchObject({ status: 'queued', durationS: 45, confirmedBy: expect.any(String) })
+      expect((await getCommand(tx, op.actor, pending.id)).status).toBe('cancelled')
+      // Y todo sigue quedando en la bitácora.
+      const [a] = await tx<{ action: string; detail: { bypass?: boolean } }[]>`
+        select action, detail from iot.audit_log where detail->>'commandId' = ${req.id}`
+      expect(a).toMatchObject({ action: 'command.request', detail: { sinConfirmacion: true } })
+    })
+  })
+
   it('una sola orden activa por invernadero; cancelar libera; el otro usuario no puede confirmar', async () => {
     await inRollback(async (tx) => {
       const op = await makeUser(tx, 'operator', { greenhouseIds: [GH] })
