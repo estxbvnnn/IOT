@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   // `npm run dev:lan`: sin esto Next bloquea sus recursos de desarrollo (hidratación y recarga en vivo) cuando la página
   // se abre por la IP del PC, y los botones no responden. Ajusta la IP si tu red cambia.
   // PARA PRUEBAS (ver PRUEBAS_TEMPORALES.md).
-  allowedDevOrigins: ['192.168.1.26', '10.12.34.112'],
+  allowedDevOrigins: ['192.168.1.26', '10.12.34.112', '192.168.0.111'],
   // El indicador de desarrollo (solo `next dev`) se mueve a la derecha para no tapar el usuario del menú.
   devIndicators: { position: 'bottom-right' },
   // Librerías solo de Node que no deben empaquetarse.

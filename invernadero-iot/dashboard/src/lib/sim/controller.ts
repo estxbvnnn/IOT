@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: ControllerConfig = {
 
 /** Límites duros del nodo: ninguna configuración u orden del servidor puede superarlos. */
 export const LIMITS = {
-  intervalS: [5, 3600], tempMax: [30, 60], pumpMaxS: [5, 120], waitS: [60, 3600],
+  intervalS: [5, 3600], tempMax: [30, 60], pumpMaxS: [5, 120], waitS: [0, 3600],
 } as const
 
 /** Muestreo mientras la bomba está encendida (respuesta rápida para cortar a tiempo). */

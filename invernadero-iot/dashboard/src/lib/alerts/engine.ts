@@ -256,7 +256,7 @@ export interface PumpAnomalyInput {
  */
 export function evaluatePumpAnomaly({ code, gapsS, waitS, consecutive = 3 }: PumpAnomalyInput): EvalOutput {
   const need = consecutive - 1
-  const limitS = 3 * waitS
+  const limitS = 3 * Math.max(waitS, 60)   // con espera 0 igual se alerta si 3 riegos seguidos ocurren dentro de 3 min
   const recent = gapsS.slice(0, need)
   if (recent.length >= need && recent.every((g) => g <= limitS)) {
     return {

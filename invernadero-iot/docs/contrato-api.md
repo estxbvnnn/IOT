@@ -194,7 +194,7 @@ guarda en su memoria no volátil (NVS) para seguir operando sin servidor. Aun as
 | `suelo_sat` (SATURADO si `suelo_raw` <) | 300 | ídem |
 | `temp_max` (no iniciar riego automático sobre esta °C) | 40 | 30 … 60 |
 | `riego_max_s` (corte duro por ciclo) | 30 | 5 … 120 |
-| `espera_s` (espera entre riegos) | 300 | 60 … 3600 |
+| `espera_s` (espera entre riegos) | 300 | 0 … 3600 (0 = sin espera; el nodo igual descansa 3 s) |
 | `auto` (riego automático: `1` activado, `0` desactivado) | 1 | `0`/`1` o `false`/`true`; opcional (si falta, el nodo conserva el valor). Con `0` el nodo no inicia riegos por humedad: el riego manual, los calendarios y «detener» siguen funcionando |
 
 Si la `cfg` recibida viola estas reglas, el nodo la **ignora completa** y conserva la anterior.

@@ -34,7 +34,7 @@ export const FIELD_SPECS: Record<ThresholdKey, FieldSpec> = {
   humAirMin: { label: 'Humedad del aire mínima', unit: '%', min: 0, max: 100, int: false, step: 1 },
   humAirMax: { label: 'Humedad del aire máxima', unit: '%', min: 0, max: 100, int: false, step: 1 },
   pumpMaxS: { label: 'Máximo de riego por ciclo', unit: 's', min: 5, max: 120, int: true, step: 1, hint: 'Corte duro del nodo (5–120 s).' },
-  pumpWaitS: { label: 'Espera entre riegos', unit: 's', min: 60, max: 3600, int: true, step: 10, hint: 'Protege el motor de arranques repetidos.' },
+  pumpWaitS: { label: 'Espera entre riegos', unit: 's', min: 0, max: 3600, int: true, step: 10, hint: 'Protege el motor de arranques repetidos. 0 = sin espera (el nodo hace una pausa técnica de 3 s).' },
   intervalS: { label: 'Reporte del nodo cada', unit: 's', min: 5, max: 3600, int: true, step: 5, hint: 'El informe pide al menos una lectura cada 5 min (300 s).' },
 }
 

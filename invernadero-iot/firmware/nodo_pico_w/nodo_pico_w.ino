@@ -124,12 +124,6 @@
 // #define USAR_BH1750      0   // busca el sensor de luz BH1750 (si no responde, "luz" va null y no es falla)  [por defecto 1]
 // #define CONSOLA_SERIAL   0   // comandos por USB: r = regar 10 s, p = parar, s = estado (0 en produccion)  [por defecto 1]
 
-/* SOLO PARA PRUEBAS DE LA BOMBA: con 1, si el DHT22 falla el riego automatico lo trata como 25 C
-   (sin esto, un DHT22 caido lo bloquea por seguridad). La falla "dht" SIGUE informandose al
-   dashboard. Se pierde la proteccion contra calor: poner 0 (o borrar la linea) al terminar.
-   >>> PARA PRUEBAS: lista completa de lo temporal en PRUEBAS_TEMPORALES.md (raiz del proyecto). <<< */
-#define PRUEBA_SIN_DHT   1
-
 /* #####################################################################
    SECCION 2 de 8:  config.h  -  pines, tiempos y opciones del nodo (Pico W)
    ##################################################################### */
@@ -215,8 +209,9 @@
 #define USAR_WATCHDOG    0   // 1 = perro guardian por hardware de 8 s (reinicia si el bucle se cuelga). Con 1 el POST HTTP se limita a 5 s.
 #endif
 
-#ifndef PRUEBA_SIN_DHT
-#define PRUEBA_SIN_DHT   0   // 1 = SOLO PRUEBAS: un DHT22 caido no bloquea el riego automatico (ver CONFIGURACION DEL USUARIO)
+#ifndef ARRANQUE_SIN_RIEGO_S
+#define ARRANQUE_SIN_RIEGO_S  20   // tras encender/reiniciar NO se inicia ningun riego AUTOMATICO durante estos segundos (da tiempo a recibir la configuracion del
+                                   // servidor, p. ej. "riego automatico desactivado"). El riego manual y las ordenes del dashboard funcionan siempre. 0 = sin espera.
 #endif
 
 /* En la Pico el anemometro usa su propio canal analogico (GP27): puede convivir con el suelo (GP26). */
@@ -261,8 +256,8 @@
    pelado, sin divisor, solo admite 0-1 V en A0.
    --------------------------------------------------------------------- */
 #define SUELO_MUESTRAS            10
-#define SUELO_ESTABILIZACION_MS   300   // el modulo YL-38 (LM393 + LEDs) tarda en estabilizar al energizarse
-#define SUELO_ENTRE_MUESTRAS_MS   20
+#define SUELO_ESTABILIZACION_MS   40    // el modulo YL-38 tarda en estabilizar al energizarse (antes 300; si la lectura sale inestable, suba a 150 o 300)
+#define SUELO_ENTRE_MUESTRAS_MS   2     // antes 20: 10 muestras en ~20 ms
 #define SUELO_DISPERSION_MAX      150   // diferencia max-min entre muestras (0-1023) mas alla de
                                         // la cual la lectura se considera inestable (cable suelto).
                                         // Algo mas tolerante: el ADC de la Pico es ruidoso.
@@ -295,7 +290,7 @@
    TIEMPOS DEL BUCLE Y DE LA RED
    --------------------------------------------------------------------- */
 #define MUESTREO_RIEGO_S      5       // mientras la bomba esta encendida se mide cada 5 s
-#define PERIODO_LOOP_MS       10      // pausa por vuelta (el corte por tiempo se evalua en cada una)
+#define PERIODO_LOOP_MS       1       // antes 10: pausa por vuelta (el corte por tiempo se evalua en cada una)
 #define TRAMAS_AVISO_WDT      3       // cuantas tramas informan "reinicio_wdt" tras un reinicio por watchdog
 #define HTTP_TIMEOUT_MS       (USAR_WATCHDOG ? 5000 : 8000)    // tiempo maximo de un POST. Este firmware usa un solo nucleo: mientras
                                       // dura, el bucle espera; por eso NUNCA se hace con la bomba encendida.
@@ -360,7 +355,8 @@ static const uint16_t RIEGO_MAX_MIN_S = 5;
 static const uint16_t RIEGO_MAX_MAX_S = 120;   // tope absoluto, ninguna orden lo supera
 static const uint16_t RIEGO_MAX_DEF_S = 30;    // informe: 30 s por ciclo
 
-static const uint16_t ESPERA_MIN_S    = 60;
+static const uint16_t ESPERA_MIN_S    = 0;     // 0 = sin espera entre riegos (el nodo igual descansa DESCANSO_MIN_MS para poder informar al servidor)
+static const uint32_t DESCANSO_MIN_MS = 3000;
 static const uint16_t ESPERA_MAX_S    = 3600;
 static const uint16_t ESPERA_DEF_S    = 300;   // informe: 5 min entre riegos
 
@@ -417,7 +413,7 @@ inline bool configValida(const Config& c) {
   if (!(c.suelo_sat < c.suelo_off && c.suelo_off < c.suelo_on)) return false;
   if (!(c.temp_max >= TEMP_MAX_MIN && c.temp_max <= TEMP_MAX_MAX)) return false;  // falso tambien con NaN
   if (c.riego_max_s < RIEGO_MAX_MIN_S || c.riego_max_s > RIEGO_MAX_MAX_S) return false;
-  if (c.espera_s < ESPERA_MIN_S || c.espera_s > ESPERA_MAX_S) return false;
+  if (c.espera_s > ESPERA_MAX_S) return false;                                    // (0 = sin espera)
   return true;
 }
 
@@ -511,6 +507,13 @@ class Controlador {
   /* Nodo del mastil: no tiene bomba, asi que las ordenes de riego se rechazan. */
   void sinBomba(bool v) { sin_bomba_ = v; }
 
+  /* Tras encender, no se inicia ningun riego AUTOMATICO durante "segundos" (el manual no se afecta). */
+  void bloquearRiegoAutoAlArrancar(uint32_t segundos) {
+    arranque_activo_ = segundos > 0;
+    arranque_ms_ = segundos * 1000UL;
+    t_arranque_ = reloj_;
+  }
+
   /* Devuelve false (y conserva la anterior) si la configuracion es invalida. */
   bool aplicarConfig(const Config& nueva) {
     if (!configValida(nueva)) return false;
@@ -522,13 +525,18 @@ class Controlador {
   /* Llamar en CADA vuelta de loop(): corte por tiempo y fin de la espera. */
   void tick(uint32_t ahora_ms) {
     avanzar(ahora_ms);
+    if (arranque_activo_ && reloj_ - t_arranque_ >= arranque_ms_) {
+      arranque_activo_ = false;
+      /* Terminada la espera de arranque: si el suelo estaba seco se mide YA para decidir con un dato fresco. */
+      if (!bomba_ && hay_lectura_ && lec_.suelo_ok && lec_.suelo_raw >= (int)cfg_.suelo_on) muestra_pendiente_ = true;
+    }
     if (bomba_) {
       const uint64_t trans = reloj_ - t_inicio_;
       const uint64_t tope  = (uint64_t)cfg_.riego_max_s * 1000ULL;
       if (manual_ && trans >= dur_orden_ms_) apagar(OFF_ORDEN, cmd_activa_);
       else if (trans >= tope)                apagar(OFF_TIEMPO_MAX, cmd_activa_);
     } else if (espera_activa_) {
-      if (reloj_ - t_fin_ >= (uint64_t)cfg_.espera_s * 1000ULL) {
+      if (reloj_ - t_fin_ >= esperaMs()) {
         espera_activa_ = false;
         /* Si la ultima lectura pedia riego, se pide medir de nuevo YA: nunca se
            decide un riego con una lectura vieja (tomada antes de regar). */
@@ -619,17 +627,21 @@ class Controlador {
     if (bomba_) return EST_RIEGO;
     if (!hay_lectura_ || !lec_.suelo_ok) return EST_BLOQ_SENSOR;
     if (lec_.suelo_raw < (int)cfg_.suelo_sat) return EST_SATURADO;
-    if (espera_activa_) return EST_ESPERA;
+    if (espera_activa_ || arranque_activo_) return EST_ESPERA;
     if (lec_.suelo_raw >= (int)cfg_.suelo_on && (!lec_.temp_ok || lec_.temp > cfg_.temp_max)) return EST_BLOQ_TEMP;
     return EST_IDLE;
   }
 
   uint32_t esperaRestanteS() const {
-    if (!espera_activa_ || bomba_) return 0;
-    const uint64_t total = (uint64_t)cfg_.espera_s * 1000ULL;
+    if (bomba_) return 0;
+    uint32_t arr = 0;                                          // espera de arranque (sin riego automatico)
+    if (arranque_activo_ && reloj_ - t_arranque_ < arranque_ms_) arr = (uint32_t)((arranque_ms_ - (reloj_ - t_arranque_) + 999ULL) / 1000ULL);
+    if (!espera_activa_) return arr;
+    const uint64_t total = esperaMs();
     const uint64_t pasado = reloj_ - t_fin_;
-    if (pasado >= total) return 0;
-    return (uint32_t)((total - pasado + 999ULL) / 1000ULL);   // redondeo hacia arriba
+    if (pasado >= total) return arr;
+    const uint32_t esp = (uint32_t)((total - pasado + 999ULL) / 1000ULL);   // redondeo hacia arriba
+    return esp > arr ? esp : arr;
   }
 
   uint32_t riegoS() const { return bomba_ ? (uint32_t)((reloj_ - t_inicio_) / 1000ULL) : 0; }
@@ -700,6 +712,9 @@ class Controlador {
   bool     espera_activa_;
   uint64_t t_fin_;
   bool     muestra_pendiente_;
+  bool     arranque_activo_;
+  uint32_t arranque_ms_;
+  uint64_t t_arranque_;
 
   Evento   ev_[COLA_MAX];
   uint8_t  n_ev_;
@@ -711,6 +726,13 @@ class Controlador {
   char     ids_[IDS_RECORDADOS][ID_MAX];
   uint8_t  ids_pos_;
 
+  /* Espera entre riegos efectiva: la configurada, pero nunca menos de DESCANSO_MIN_MS (con espera 0 el nodo
+     descansa 3 s: es el tiempo que necesita para enviar al servidor los eventos del riego que acaba de terminar). */
+  uint64_t esperaMs() const {
+    const uint64_t e = (uint64_t)cfg_.espera_s * 1000ULL;
+    return e < DESCANSO_MIN_MS ? (uint64_t)DESCANSO_MIN_MS : e;
+  }
+
   void ponerACero(uint32_t ahora_ms, bool riego_interrumpido) {
     cfg_ = configPorDefecto();
     lec_.suelo_ok = false; lec_.suelo_raw = 0; lec_.temp_ok = false; lec_.temp = 0.0f;
@@ -721,6 +743,7 @@ class Controlador {
     bomba_ = false; manual_ = false; manual_ignora_suelo_ = false;
     dur_orden_ms_ = 0; t_inicio_ = 0; cmd_activa_[0] = 0;
     espera_activa_ = false; t_fin_ = 0; muestra_pendiente_ = false;
+    arranque_activo_ = false; arranque_ms_ = 0; t_arranque_ = 0;
     memset(ev_, 0, sizeof(ev_));   n_ev_ = 0;  ev_seq_ = 0;
     memset(ack_, 0, sizeof(ack_)); n_ack_ = 0; ack_seq_ = 0;
     memset(ids_, 0, sizeof(ids_)); ids_pos_ = 0;
@@ -754,6 +777,7 @@ class Controlador {
     }
     /* Bomba apagada: corresponde iniciar un riego automatico? */
     if (!cfg_.auto_riego) return;                                // riego automatico desactivado desde el dashboard
+    if (arranque_activo_) return;                                // recien encendido: se espera la configuracion del servidor
     if (!lec_.suelo_ok) return;                                  // sin lectura de suelo no se decide
     if (lec_.suelo_raw < (int)cfg_.suelo_on) return;             // no hace falta regar
     if (lec_.suelo_raw < (int)cfg_.suelo_sat) return;            // SATURADO (defensa en profundidad)
@@ -868,7 +892,7 @@ class Controlador {
 
 namespace envio {
 
-static const uint32_t SEPARACION_MIN_MS    = 2000;
+static const uint32_t SEPARACION_MIN_MS    = 1200;   // el servidor exige > 1000 ms entre tramas de un mismo nodo
 static const uint32_t TIMEOUT_EN_VUELO_MS  = 30000;
 static const uint8_t  INTENTOS_MAX         = 3;
 static const uint32_t PASO_REINTENTO_MS    = 3000;    // 3 s tras el 1.o fallo, 6 s tras el 2.o
@@ -2003,9 +2027,6 @@ static void finalizarRonda() {
   }                                                   // sin lectura de DHT (bomba encendida): se conserva el ultimo valor
   l.temp_ok = ultima.temp_ok;
   l.temp    = ultima.temp;
-#if PRUEBA_SIN_DHT
-  if (!l.temp_ok) { l.temp_ok = true; l.temp = 25.0f; }   // solo para el controlador: "ultima" (y la trama) siguen informando la falla
-#endif
   ultima.suelo_ok = ronda.suelo_ok;  ultima.suelo_raw = ronda.suelo_raw;
   ultima.luz_ok = ronda.luz_ok;      ultima.luz = ronda.luz;
   ultima.viento_ok = ronda.viento_ok; ultima.viento = ronda.viento;
@@ -2284,7 +2305,7 @@ void setup() {
   sensores::releIniciarSeguro();
 
   Serial.begin(115200);
-  { const uint32_t t0 = millis(); while (!Serial && millis() - t0 < 2000) delay(10); }   // da tiempo a abrir el Monitor Serie
+  { const uint32_t t0 = millis(); while (!Serial && millis() - t0 < 500) delay(10); }   // da tiempo a abrir el Monitor Serie
   EEPROM.begin(sizeof(CfgFlash));
 
   /* 2) Motivo del reinicio. Si el nodo se reinicio con la bomba encendida, se parte con la espera
@@ -2295,6 +2316,7 @@ void setup() {
   if (por_wdt) tramas_aviso_wdt = TRAMAS_AVISO_WDT;
 
   ctl.iniciar(millis(), interrumpido);
+  ctl.bloquearRiegoAutoAlArrancar(ARRANQUE_SIN_RIEGO_S);
 #if NODO_MASTIL
   ctl.sinBomba(true);
 #endif
@@ -2313,8 +2335,8 @@ void setup() {
   Serial.println("=============================================");
   if (interrumpido) Serial.println("AVISO: el nodo se reinicio con la bomba encendida; espera de seguridad activa");
   if (por_wdt)      Serial.println("AVISO: reinicio por watchdog");
-#if PRUEBA_SIN_DHT
-  Serial.println("AVISO: PRUEBA_SIN_DHT activo -> sin DHT22 el riego se decide como si hubiera 25 C (sin proteccion de calor)");
+#if ARRANQUE_SIN_RIEGO_S > 0
+  Serial.printf("AVISO: sin riego automatico los primeros %d s tras encender (la bomba no se activa sola al arrancar)\n", (int)ARRANQUE_SIN_RIEGO_S);
 #endif
   imprimirConfig("CFG:");
 #if CONSOLA_SERIAL

@@ -1,6 +1,6 @@
 /**
  * PASARELA para la Raspberry Pi: recibe las tramas de los nodos por la red local, las guarda y las envía a Supabase
- * cada minuto (reutiliza TODA la lógica del dashboard: validación, alertas, órdenes de riego y configuración).
+ * cada pocos segundos (5 s por defecto; reutiliza TODA la lógica del dashboard: validación, alertas, órdenes de riego y configuración).
  *
  *   npm run gateway
  *
@@ -8,7 +8,7 @@
  *   DATABASE_HOST / DATABASE_PORT / DATABASE_NAME / DATABASE_USER / DATABASE_PASSWORD / DATABASE_SSL_MODE
  *       las mismas credenciales del rol «iot_app» que usa el dashboard
  *   GATEWAY_PORT       puerto local para los nodos             (por defecto 3100)
- *   GATEWAY_FORWARD_S  segundos entre envíos a Supabase         (por defecto 60)
+ *   GATEWAY_FORWARD_S  segundos entre envíos a Supabase         (por defecto 2, mínimo 1)
  *   GATEWAY_SPOOL      carpeta de la cola y de la caché         (por defecto ./.gateway)
  *
  * En los nodos, SERVER_URL debe apuntar a esta pasarela:  http://IP_DE_LA_PI:3100
@@ -23,7 +23,7 @@ const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
 const log = (m: string) => console.log(`[${stamp()}] ${m}`)
 
 const port = Number(process.env.GATEWAY_PORT ?? 3100)
-const everyS = Math.max(5, Number(process.env.GATEWAY_FORWARD_S ?? 60))
+const everyS = Math.max(1, Number(process.env.GATEWAY_FORWARD_S ?? 2))
 const dir = path.resolve(DASHBOARD_DIR, process.env.GATEWAY_SPOOL ?? '.gateway')
 
 const db = appDb(2)

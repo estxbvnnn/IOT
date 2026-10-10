@@ -22,7 +22,7 @@ Este archivo resume lo hecho, lo aprendido y lo pendiente. Las credenciales NO e
 - Lectura del cuerpo de la respuesta HTTP arreglada (`getString()` + `availableForWrite()`): **antes el nodo leía 0 bytes y nunca aplicaba configuración ni órdenes** (causa raíz de "regar no hace nada").
 - Suelo con lectura < `SUELO_RAW_MIN_VALIDO` (20) = **sensor desconectado** (falla `suelo`, `bloq_sensor`), no "saturado".
 - `riego_auto` activable desde el dashboard (parámetro `auto` de la cfg, guardado en flash; `CFG_MAGIA` 0xC0F16A03).
-- `PRUEBA_SIN_DHT` (solo pruebas): sin DHT22 el riego se decide como si hubiera 25 °C.
+- (`PRUEBA_SIN_DHT` fue eliminada el 10 oct 2026, con el DHT22 ya funcionando.)
 - **Tabla de estado** por el Monitor Serie cada `TABLA_SERIAL_S` = 10 s (0 = formato antiguo).
 - Diagnóstico: `RED: respuesta 200 ilegible (N bytes): ...` si el nodo no puede leer la respuesta.
 
@@ -49,7 +49,7 @@ Este archivo resume lo hecho, lo aprendido y lo pendiente. Las credenciales NO e
 - YL-38: AO → **A0**, VCC → **D7**, GND → GND.
 
 ## 6. Valores temporales de prueba (revertir) — ver `PRUEBA_TEMPORALES.md`
-I1: `soil_sat` = 1 (definitivo 300), reporte cada 10 s (definitivo 300), `PRUEBA_SIN_DHT = 1` (definitivo 0), consola USB activa, WiFi/IP/token en el sketch, `allowedDevOrigins`, cuenta superadmin. El riego automático de I1 está **desactivado** en el dashboard (activarlo cuando todo esté conectado y la bomba tenga agua).
+I1: `soil_sat` = 1 (definitivo 300), reporte cada 10 s (definitivo 300), `PRUEBA_SIN_DHT = 1` [ELIMINADA] (definitivo 0), consola USB activa, WiFi/IP/token en el sketch, `allowedDevOrigins`, cuenta superadmin. El riego automático de I1 está **desactivado** en el dashboard (activarlo cuando todo esté conectado y la bomba tenga agua).
 
 ## 7. Pendiente / siguiente paso (mañana)
 1. Conectar DHT22 y YL-38 reales (ver sección 5) y revisar la tabla del Monitor Serie: temperatura/humedad válidas, suelo ≈ 350 en agua y ≈ 1000 al aire.
@@ -77,3 +77,9 @@ I1: `soil_sat` = 1 (definitivo 300), reporte cada 10 s (definitivo 300), `PRUEBA
 - Las órdenes/umbrales desde el dashboard tardan 1–2 min en llegar al nodo (envío de 60 s + intervalo del nodo). "En línea" del dashboard aguanta envíos de hasta ~75 s.
 - Tests: `tests/unit/gateway.test.ts` (15, con ingest simulado: no toca Supabase). Total unitarios: 184.
 - `firmware/nodo_pi5/` (Pi como nodo con DHT22/YL-38 DO/relé) queda **sin uso** en esta arquitectura; sus 25 pruebas pasan (`python -m unittest test_nodo_pi5`).
+
+## 11. Cambios del 10 oct 2026
+- Esperas del sketch más cortas (loop 1 ms, medición del suelo ~60 ms), pasarela cada 2 s, refresco del dashboard cada 3 s.
+- El riego automático no arranca durante los primeros 20 s tras encender (`ARRANQUE_SIN_RIEGO_S`).
+- Espera entre riegos permitida en 0 (migración `0006_espera_sin_minimo.sql`; el nodo mantiene una pausa técnica de 3 s). I1 quedó con espera 0.
+- Eliminada `PRUEBA_SIN_DHT`.

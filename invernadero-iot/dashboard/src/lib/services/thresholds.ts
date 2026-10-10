@@ -25,7 +25,7 @@ export const thresholdsSchema = z
     humAirMin: z.number().min(0).max(100).transform(round1),
     humAirMax: z.number().min(0).max(100).transform(round1),
     pumpMaxS: z.number().int().min(5).max(120),
-    pumpWaitS: z.number().int().min(60).max(3600),
+    pumpWaitS: z.number().int().min(0).max(3600), // 0 = sin espera entre riegos
     intervalS: z.number().int().min(5).max(3600),
     autoEnabled: z.boolean(),
   })

@@ -1,12 +1,12 @@
 # Pasarela (gateway) en la Raspberry Pi 5
 
 ```
- NodeMCU / Pico W ──HTTP (red local)──►  Raspberry Pi 5  ──(cada 60 s)──►  Supabase  ◄──  Dashboard
+ NodeMCU / Pico W ──HTTP (red local)──►  Raspberry Pi 5  ──(cada 2 s)──►  Supabase  ◄──  Dashboard
    sensores y bomba        :3100          cola en disco                 (base de datos)     (web)
         ◄── cfg + órdenes (de la última respuesta de Supabase) ──
 ```
 
-La Pi **no riega ni mide**: recibe las tramas de los nodos, las guarda en disco y cada minuto las reenvía a Supabase con la
+La Pi **no riega ni mide**: recibe las tramas de los nodos, las guarda en disco y cada 2 s las reenvía a Supabase con la
 hora real de cada una. Usa **el mismo código del dashboard** (`handleIngest`): validación, alertas, órdenes de riego y
 configuración. El nodo no cambia su lógica; solo apunta a la Pi en lugar de al servidor.
 
@@ -45,7 +45,7 @@ El nodo y la Pi deben estar en la **misma red**; en un Wi-Fi de celular o de inv
 | Variable | Por defecto | Qué hace |
 |---|---|---|
 | `GATEWAY_PORT` | 3100 | Puerto que escuchan los nodos |
-| `GATEWAY_FORWARD_S` | 60 | Segundos entre envíos a Supabase (mínimo 5) |
+| `GATEWAY_FORWARD_S` | 2 | Segundos entre envíos a Supabase (mínimo 1; súbalo a 30–60 si quiere menos tráfico) |
 | `GATEWAY_SPOOL` | `./.gateway` | Carpeta de la cola (`cola/`) y de las respuestas guardadas (`respuestas.json`) |
 
 ## 4. Qué pasa cuando algo falla
@@ -57,11 +57,11 @@ El nodo y la Pi deben estar en la **misma red**; en un Wi-Fi de celular o de inv
 | Token de nodo inválido | La primera trama recibe 401 (el nodo lo muestra en su Monitor Serie); no se guarda nada |
 
 ## 5. Detalles que conviene saber
-- **Retraso de las órdenes:** una orden de riego manual hecha en el dashboard llega a la Pi en el siguiente envío (≤ 60 s) y al
-  nodo en su siguiente reporte (≤ su intervalo): **1–2 min en total**. Igual con los cambios de umbrales y con el interruptor del
-  riego automático.
+- **Retraso de las órdenes:** una orden de riego manual hecha en el dashboard llega a la Pi en el siguiente envío (≤ 2 s) y al
+  nodo en su siguiente reporte (≤ su intervalo, 5 s en I1): **unos 3–9 s en total**. Igual con los cambios de umbrales y con el
+  interruptor del riego automático. Con `GATEWAY_FORWARD_S=60` serían 1–2 min.
 - **"En línea" en el dashboard:** se considera sin conexión pasados 90 s (o 3 intervalos del nodo) sin datos nuevos. Con envíos
-  cada 60 s funciona; si sube `GATEWAY_FORWARD_S` por encima de ~75, el dashboard marcará los nodos como desconectados entre envíos.
+  cada 2 s sobra margen; si sube `GATEWAY_FORWARD_S` por encima de ~75, el dashboard marcará los nodos como desconectados entre envíos.
 - **Hora:** la Pi pone la hora de recepción a cada trama; debe tener la hora correcta (Raspberry Pi OS la sincroniza sola con internet).
 - **Seguridad:** la Pi guarda en disco los tokens de los nodos (dentro de la cola) y las credenciales de `iot_app` en `.env.local`.
   Proteja el acceso a la Pi; el puerto 3100 solo necesita ser visible desde la red local (no lo exponga a internet).

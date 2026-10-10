@@ -220,7 +220,7 @@ describe('umbrales de riego (agrónomo)', () => {
       await bad({ tempFrost: 8 }, 'tempHeat') // helada ≥ frío
       await bad({ humAirMin: 95 }, 'humAirMin')
       await bad({ pumpMaxS: 600 }, 'pumpMaxS') // sobre el límite duro de 120 s
-      await bad({ pumpWaitS: 10 }, 'pumpWaitS')
+      await bad({ pumpWaitS: -10 }, 'pumpWaitS') // 0 sí vale: sin espera entre riegos
       await bad({ intervalS: 2 }, 'intervalS')
       await bad({ soilOn: 1500 }, 'soilOn')
       await bad({ soilOn: 700.5 }, 'soilOn')

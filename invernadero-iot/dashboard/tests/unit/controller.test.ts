@@ -241,7 +241,7 @@ describe('configuración recibida del servidor', () => {
     expect(c.setConfig(cfg({ ver: 2, soilOff: 800 }))).toBe(false) // off ≥ on
     expect(c.setConfig(cfg({ ver: 2, soilSat: 600 }))).toBe(false) // sat ≥ off
     expect(c.setConfig(cfg({ ver: 2, pumpMaxS: 600 }))).toBe(false) // sobre el límite duro
-    expect(c.setConfig(cfg({ ver: 2, waitS: 5 }))).toBe(false) // bajo el mínimo de espera
+    expect(c.setConfig(cfg({ ver: 2, waitS: -5 }))).toBe(false) // la espera no puede ser negativa (0 = sin espera)
     expect(c.setConfig(cfg({ ver: 2, tempMax: 90 }))).toBe(false)
     expect(c.config.ver).toBe(1)
     expect(validateConfig(cfg({ intervalS: 1 }))).toBeNull()

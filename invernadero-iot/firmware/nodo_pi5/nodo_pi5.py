@@ -49,7 +49,6 @@ import urllib.request
 # ===================================================================================================
 SERVER_URL = os.environ.get("SERVER_URL", "http://10.12.34.112:3000")      # SIN barra final
 DEVICE_TOKEN = os.environ.get("DEVICE_TOKEN", "PEGAR_AQUI_EL_TOKEN_DEL_NODO")
-PRUEBA_SIN_DHT = os.environ.get("PRUEBA_SIN_DHT", "0") == "1"   # SOLO PRUEBAS: sin DHT22 el riego se decide como si hubiera 25 C
 TABLA_S = int(os.environ.get("TABLA_S", "10"))                  # segundos entre filas de la tabla (0 = sin tabla)
 
 # Pines (numeros BCM)
@@ -781,8 +780,6 @@ class Nodo:
         self._avisar("suelo", not s_ok, "AVISO: sin lectura valida del sensor de suelo (YL-38 DO flotando: revise DO, VCC y GND)", "OK: sensor de suelo recuperado")
         self._avisar("dht", not dht_vivo, "AVISO: sin lectura valida del DHT22 (revise el cableado)", "OK: DHT22 recuperado")
         l = Lectura(suelo_ok=s_ok, suelo_raw=s_raw, temp_ok=dht_vivo, temp=u["temp"])
-        if PRUEBA_SIN_DHT and not l.temp_ok:
-            l.temp_ok, l.temp = True, 25.0                        # solo para el controlador: la trama sigue informando la falla
         self.ctl.nueva_lectura(l, self.ahora())
         self.aplicar_bomba()
         self.primera_muestra = True
@@ -955,8 +952,6 @@ class Nodo:
         self.log("=" * 45)
         self.log(f" Invernadero: nodo de riego  (firmware {FW_VERSION}, Raspberry Pi 5)")
         self.log("=" * 45)
-        if PRUEBA_SIN_DHT:
-            self.log("AVISO: PRUEBA_SIN_DHT activo -> sin DHT22 el riego se decide como si hubiera 25 C (sin proteccion de calor)")
         if not self.red_activa:
             self.log("RED: sin DEVICE_TOKEN -> modo local (el riego funciona; no se envia nada al dashboard)")
         else:
