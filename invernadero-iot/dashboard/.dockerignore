@@ -1,0 +1,9 @@
+node_modules
+.next
+.gateway
+.env*
+.demo-*
+tests
+coverage
+*.tsbuildinfo
+Dockerfile*

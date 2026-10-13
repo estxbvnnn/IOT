@@ -1,7 +1,7 @@
 /* =====================================================================
    NODO DEL INVERNADERO  -  monitoreo y riego automatico (ESP8266)
    ARCHIVO UNICO PARA ARDUINO IDE  -  firmware 1.0.0-esp8266
-   DHT22 + YL-38/YL-69 + bomba de agua por rele  ->  dashboard (Supabase)
+   DHT22 + YL-38/YL-69 + bomba de agua por rele  ->  MQTT (Raspberry Pi) -> Supabase
    Placas: NodeMCU 1.0 (ESP-12E), Wemos/LOLIN D1 mini y clones con ESP8266.
 
    TODO el firmware esta en ESTE archivo: no necesita ningun otro archivo. Puede
@@ -16,17 +16,19 @@
    2) Bibliotecas (una sola vez): Herramientas > Administrar bibliotecas
           "DHT sensor library" y "Adafruit Unified Sensor"  (Adafruit)
           "ArduinoJson"  (Benoit Blanchon), version 7.x
+          "PubSubClient"  (Nick O'Leary)  <- cliente MQTT (solo si USAR_MQTT = 1)
    3) Edite SOLO el bloque "CONFIGURACION DEL USUARIO" (mas abajo):
-        WIFI_SSID, WIFI_PASS, SERVER_URL y DEVICE_TOKEN.
+        WIFI_SSID, WIFI_PASS, MQTT_HOST (IP de la Raspberry Pi), MQTT_USER/MQTT_PASS y DEVICE_TOKEN.
    4) Herramientas > Placa: "NodeMCU 1.0 (ESP-12E Module)" o
       "LOLIN(WEMOS) D1 R2 & mini". Elija el Puerto, pulse Subir y abra el
       Monitor Serie a 115200.
    5) Conexiones (D5 = GPIO14, D6 = GPIO12, D7 = GPIO13): en la SECCION 2 (config.h).
 
    TENGA EN CUENTA
-   - SERVER_URL debe ser la IP del PC en la red local (ej.: http://192.168.1.50:3000),
-     con el dashboard iniciado con "npm run dev:lan" y el puerto 3000 permitido en el
-     Firewall de Windows. "localhost" NO sirve: para la placa "localhost" es ella misma.
+   - Con USAR_MQTT = 1 (lo normal) el nodo publica por MQTT en el Mosquitto de la Raspberry
+     Pi (MQTT_HOST = su IP, puerto 1883) y la Pi reenvia a Supabase: ver docs/gateway-raspberry.md.
+     Con USAR_MQTT = 0 hace POST HTTP a SERVER_URL (la Pi en el puerto 3100 o el dashboard
+     directo, ej.: http://192.168.1.50:3000). "localhost" NO sirve: para la placa es ella misma.
    - Solo para placas ESP8266. Para ESP32 use nodo_invernadero_unico_esp32.ino.
      No sirve en Arduino UNO, Nano ni Mega.
    - El ESP8266 tiene UN solo nucleo y UNA sola entrada analogica (A0): la usa el suelo
@@ -54,7 +56,7 @@
      4. envio.h       cuando enviar y reintentar tramas (logica pura, probada en el PC)
      5. protocolo.h   JSON de la trama y de la respuesta (docs/contrato-api.md)
      6. sensores.h    DHT22, YL-38, BH1750, anemometro y rele (ESP8266)
-     7. red.h         WiFi + HTTP(S) (ESP8266)
+     7. red.h         WiFi + MQTT (Mosquitto en la Pi) o HTTP(S) (ESP8266)
      8. nodo_invernadero_esp8266.ino   setup() y loop(): une todo
    ===================================================================== */
 
@@ -90,13 +92,24 @@
    por el Monitor Serie. */
 
 /* Red WiFi del predio (2,4 GHz) */
-#define WIFI_SSID     "Wifu"
-#define WIFI_PASS     "admin123"
+#define WIFI_SSID     "Wifuu"
+#define WIFI_PASS     "admin1234"
 
-/* Direccion del dashboard, SIN barra final.
+/* TRANSPORTE. 1 = MQTT hacia el Mosquitto de la Raspberry Pi (arquitectura final:
+   NodeMCU -> MQTT -> Raspberry Pi -> HTTPS -> Supabase). 0 = POST HTTP a SERVER_URL. */
+#define USAR_MQTT     1
+
+/* MQTT: IP de la Raspberry Pi (hostname -I en la Pi; conviene reservarla en el router),
+   puerto de Mosquitto y la clave de docker-compose (MQTT_USER / MQTT_PASS del archivo .env). */
+#define MQTT_HOST     "10.231.225.220"
+#define MQTT_PORT     1883
+#define MQTT_USER     "nodo"
+#define MQTT_PASS     "guZbht9BhrfDT4V9xlPs8aN4"
+
+/* HTTP (solo con USAR_MQTT 0): direccion de la Pi (:3100) o del dashboard, SIN barra final.
    Desarrollo (misma red):  http://192.168.1.50:3000   (npm run dev:lan en el dashboard)
    Produccion:              https://su-dominio.cl                                        */
-#define SERVER_URL    "http://192.168.1.26:3000"
+#define SERVER_URL    "http://10.231.225.12:3000"
 
 /* Token unico de ESTE nodo. Lo entrega el dashboard al crear el invernadero (Invernaderos >
    Nuevo invernadero) o al rotarlo (Equipos > Rotar token) y solo se muestra una vez.
@@ -118,6 +131,11 @@
 // #define USAR_ANEMOMETRO  1   // lee el anemometro (usar junto con NODO_MASTIL 1)  [por defecto 0]
 // #define USAR_BH1750      0   // busca el sensor de luz BH1750 (si no responde, "luz" va null y no es falla)  [por defecto 1]
 // #define CONSOLA_SERIAL   0   // comandos por USB: r = regar 10 s, p = parar, s = estado (0 en produccion)  [por defecto 1]
+
+/* Cliente MQTT: va aqui (y no con las demas bibliotecas) porque USAR_MQTT se define arriba. */
+#if USAR_MQTT
+#include <PubSubClient.h>
+#endif
 
 /* #####################################################################
    SECCION 2 de 8:  config.h  -  pines, tiempos y opciones del nodo (ESP8266)
@@ -276,7 +294,7 @@
 #define MUESTREO_RIEGO_S      5       // mientras la bomba esta encendida se mide cada 5 s
 #define PERIODO_LOOP_MS       1       // antes 10: pausa por vuelta (el corte por tiempo se evalua en cada una)
 #define TRAMAS_AVISO_WDT      3       // cuantas tramas informan "reinicio_wdt" tras un reinicio por watchdog
-#define HTTP_TIMEOUT_MS       8000    // tiempo maximo de un POST. El ESP8266 no tiene otro nucleo: mientras
+#define HTTP_TIMEOUT_MS       8000    // tiempo maximo de un POST (o de la espera de la respuesta MQTT). El ESP8266 no tiene otro nucleo: mientras
                                       // dura, el bucle espera; por eso NUNCA se hace con la bomba encendida.
 #define WIFI_REINTENTO_MS     20000   // primer reintento de conexion WiFi; luego se duplica hasta 5 min
 
@@ -1529,13 +1547,16 @@ struct MsgRx {
 
 /* Valores de la plantilla: el nodo NO intenta conectarse. */
 inline bool credencialesDeEjemplo() {
-  return strcmp(DEVICE_TOKEN, "PEGAR_AQUI_EL_TOKEN_DEL_NODO") == 0 || strcmp(WIFI_SSID, "NOMBRE_DE_LA_RED") == 0;
+  return strcmp(DEVICE_TOKEN, "PEGAR_AQUI_EL_TOKEN_DEL_NODO") == 0 || strcmp(WIFI_SSID, "NOMBRE_DE_LA_RED") == 0
+      || (USAR_MQTT && strcmp(MQTT_HOST, "PEGAR_AQUI_IP_DE_LA_PI") == 0);
 }
 
 /* URL https:// sin certificado raiz (CA_ROOT_PEM) y sin TLS_INSEGURO: se prefiere NO enviar antes que
    enviar sin verificar al servidor. Se avisa una sola vez al arrancar (ver redIniciar). */
 inline bool httpsSinCA() {
-#if defined(TLS_INSEGURO) || defined(CA_ROOT_PEM)
+#if USAR_MQTT
+  return false;                        // MQTT en la red local: no usa HTTPS
+#elif defined(TLS_INSEGURO) || defined(CA_ROOT_PEM)
   return false;
 #else
   return strncmp(SERVER_URL, "https://", 8) == 0;
@@ -1688,6 +1709,108 @@ inline void enviarPost(const MsgTx& t, MsgRx& r) {
   delete seguro;
 }
 
+#if USAR_MQTT
+/* ---------- Transporte MQTT (Mosquitto en la Raspberry Pi) ----------
+     publica en   invernadero/<id>/tx   "TOKEN\n{trama JSON}"
+     escucha en   invernadero/<id>/rx   "<HTTP> <Retry-After>\n{respuesta JSON}"
+   La pasarela de la Pi responde con el mismo contrato que el servidor HTTP (200/400/401/413/429/503),
+   asi que el resto del firmware no cambia: enviarMqtt() deja el mismo MsgRx que enviarPost(). */
+static WiFiClient   mqtt_tcp;
+static PubSubClient mqtt(mqtt_tcp);
+static char         mqtt_tema_tx[48];
+static char         mqtt_tema_rx[48];
+static char         mqtt_id[24];
+static bool         mqtt_listo = false;       // true tras configurar servidor, buffer e identificador
+static MsgRx*       mqtt_destino = nullptr;   // donde dejar la respuesta (solo mientras se espera una)
+static bool         mqtt_respondido = false;
+
+/* Llega "<HTTP> <Retry-After>\n{JSON}". Se ignora si no se esta esperando respuesta (llegada tardia). */
+static void mqttAlLlegar(char* tema, uint8_t* datos, unsigned int largo) {
+  (void)tema;
+  if (mqtt_destino == nullptr || mqtt_respondido) return;
+  unsigned int nl = 0;
+  while (nl < largo && datos[nl] != '\n') nl++;
+  if (nl == 0 || nl >= largo || nl > 20) return;
+  char cab[24];
+  memcpy(cab, datos, nl);
+  cab[nl] = 0;
+  int codigo = 0;
+  unsigned int retry = 0;
+  if (sscanf(cab, "%d %u", &codigo, &retry) < 1) return;
+  MsgRx& r = *mqtt_destino;
+  r.http = codigo;
+  r.retry_after_s = (uint16_t)constrain((int)retry, 0, 3600);
+  size_t n = largo - nl - 1;
+  if (n >= sizeof(r.cuerpo)) n = sizeof(r.cuerpo) - 1;
+  memcpy(r.cuerpo, datos + nl + 1, n);
+  r.cuerpo[n] = 0;
+  r.n = (uint16_t)n;
+  mqtt_respondido = true;
+}
+
+/* Conecta con el broker si hace falta. false si no se logra (el envio se reintenta mas tarde). */
+inline bool mqttConectar() {
+  if (!mqtt_listo) {
+    snprintf(mqtt_id, sizeof(mqtt_id), "nodo-%06x", (unsigned)ESP.getChipId());
+    snprintf(mqtt_tema_tx, sizeof(mqtt_tema_tx), "invernadero/%s/tx", mqtt_id);
+    snprintf(mqtt_tema_rx, sizeof(mqtt_tema_rx), "invernadero/%s/rx", mqtt_id);
+    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    mqtt.setBufferSize(protocolo::RX_MAX + 128);           // cabe la respuesta mas grande; la trama sale por trozos
+    mqtt.setKeepAlive(30);
+    mqtt.setSocketTimeout(4);                              // segundos: conectar no debe bloquear mas de lo debido
+    mqtt.setCallback(mqttAlLlegar);
+    mqtt_listo = true;
+  }
+  if (mqtt.connected()) return true;
+  if (!mqtt.connect(mqtt_id, MQTT_USER, MQTT_PASS)) {
+    Serial.printf("MQTT: no conecta con %s:%d (estado %d; -2 = sin ruta o broker apagado, 5 = clave rechazada)\n", MQTT_HOST, (int)MQTT_PORT, mqtt.state());
+    return false;
+  }
+  mqtt.subscribe(mqtt_tema_rx, 1);
+  Serial.printf("MQTT: conectado a %s:%d como %s\n", MQTT_HOST, (int)MQTT_PORT, mqtt_id);
+  return true;
+}
+
+/* Publica la trama y espera la respuesta (hasta HTTP_TIMEOUT_MS). Deja el resultado en r. */
+inline void enviarMqtt(const MsgTx& t, MsgRx& r) {
+  r.seq = t.seq;
+  r.http = -1;
+  r.n = 0;
+  r.retry_after_s = 0;
+  r.recibido_ms = millis();
+  r.cuerpo[0] = 0;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!mqttConectar()) return;
+
+  mqtt.loop();                                             // descarta respuestas tardias de tramas anteriores
+  mqtt_respondido = false;
+  mqtt_destino = &r;
+
+  const size_t largo_token = strlen(DEVICE_TOKEN);
+  bool ok = mqtt.beginPublish(mqtt_tema_tx, largo_token + 1 + t.n, false);
+  if (ok) {
+    mqtt.write((const uint8_t*)DEVICE_TOKEN, largo_token);
+    mqtt.write((uint8_t)'\n');
+    mqtt.write((const uint8_t*)t.cuerpo, t.n);
+    ok = mqtt.endPublish();
+  }
+  if (!ok) {
+    mqtt_destino = nullptr;
+    mqtt.disconnect();                                     // conexion rota: se reabre en el siguiente intento
+    return;
+  }
+
+  const uint32_t t0 = millis();
+  while (!mqtt_respondido && (uint32_t)(millis() - t0) < HTTP_TIMEOUT_MS && mqtt.connected()) {
+    mqtt.loop();
+    delay(1);
+  }
+  mqtt_destino = nullptr;
+  r.recibido_ms = millis();
+  if (!mqtt_respondido) r.http = -1;                       // sin respuesta: la trama se reintenta
+}
+#endif
+
 }  // namespace red
 
 /* ---------- Interfaz para el bucle de control ---------- */
@@ -1717,17 +1840,25 @@ inline void redIniciar() {
 
 /* Mantiene el WiFi. Barato: se llama en cada vuelta. */
 inline void redMantener() {
-  if (red::activa) red::mantenerWiFi();
+  if (!red::activa) return;
+  red::mantenerWiFi();
+#if USAR_MQTT
+  if (red::mqtt.connected()) red::mqtt.loop();             // keep-alive del broker; barato
+#endif
 }
 
 inline bool redConectada() { return red::activa && WiFi.status() == WL_CONNECTED; }
 inline int  redRssi()      { return WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0; }
 
-/* Hace el POST de la trama AHORA (bloquea hasta HTTP_TIMEOUT_MS) y deja la respuesta para redRecibir().
+/* Envia la trama AHORA (POST HTTP, o publica por MQTT y espera la respuesta; bloquea hasta HTTP_TIMEOUT_MS) y deja la respuesta para redRecibir().
    false si la red no esta activa o aun hay una respuesta sin recoger. */
 inline bool redEnviar(const MsgTx& m) {
   if (!red::activa || red::hay_rx) return false;
+#if USAR_MQTT
+  red::enviarMqtt(m, red::rx);
+#else
   red::enviarPost(m, red::rx);
+#endif
   red::hay_rx = true;
   return true;
 }

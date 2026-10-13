@@ -1,5 +1,5 @@
 /**
- * PASARELA para la Raspberry Pi: recibe las tramas de los nodos por la red local, las guarda y las envía a Supabase
+ * PASARELA para la Raspberry Pi: recibe las tramas de los nodos por MQTT (Mosquitto) o HTTP, las guarda y las envía a Supabase
  * cada pocos segundos (5 s por defecto; reutiliza TODA la lógica del dashboard: validación, alertas, órdenes de riego y configuración).
  *
  *   npm run gateway
@@ -10,12 +10,15 @@
  *   GATEWAY_PORT       puerto local para los nodos             (por defecto 3100)
  *   GATEWAY_FORWARD_S  segundos entre envíos a Supabase         (por defecto 2, mínimo 1)
  *   GATEWAY_SPOOL      carpeta de la cola y de la caché         (por defecto ./.gateway)
+ *   MQTT_URL           broker Mosquitto (p. ej. mqtt://mosquitto:1883); sin él, solo HTTP
+ *   MQTT_USER / MQTT_PASS   credenciales del broker
  *
- * En los nodos, SERVER_URL debe apuntar a esta pasarela:  http://IP_DE_LA_PI:3100
+ * Los nodos MQTT publican en el broker (ver gateway-mqtt.ts); los nodos HTTP usan SERVER_URL = http://IP_DE_LA_PI:3100
  */
 import path from 'node:path'
 import { alertsSweep } from './lib/gateway-sweep'
 import { Gateway } from './lib/gateway-core'
+import { startMqtt } from './lib/gateway-mqtt'
 import { DASHBOARD_DIR, appDb } from './lib/scriptenv'
 import { handleIngest } from '../src/lib/services/ingest'
 
@@ -41,6 +44,10 @@ server.listen(port, '0.0.0.0', () => {
   if (gw.spoolSize() > 0) log(`Hay ${gw.spoolSize()} tramas pendientes de un arranque anterior`)
 })
 
+const mqttLink = process.env.MQTT_URL
+  ? startMqtt(gw, { url: process.env.MQTT_URL, username: process.env.MQTT_USER, password: process.env.MQTT_PASS, log })
+  : null
+
 async function cycle(): Promise<void> {
   const r = await gw.forward()
   if (r.processed > 0 || r.dropped > 0 || r.failed) {
@@ -56,6 +63,7 @@ async function shutdown(): Promise<void> {
   clearInterval(timer)
   log('Cerrando: último envío…')
   server.close()
+  await mqttLink?.close()
   await Promise.race([cycle(), new Promise((r) => setTimeout(r, 10_000))]).catch(() => undefined)
   await db.end({ timeout: 3 }).catch(() => undefined)
   process.exit(0)

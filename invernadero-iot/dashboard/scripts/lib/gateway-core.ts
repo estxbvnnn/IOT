@@ -1,6 +1,6 @@
 /**
- * Núcleo de la pasarela (gateway) de la Raspberry Pi: recibe las tramas de los nodos (NodeMCU, Pico…) por HTTP en la
- * red local, las guarda en una cola en disco y las reenvía a Supabase cada cierto tiempo, conservando la hora real
+ * Núcleo de la pasarela (gateway) de la Raspberry Pi: recibe las tramas de los nodos (NodeMCU, Pico…) por MQTT
+ * (Mosquitto, ver gateway-mqtt.ts) o por HTTP en la red local, las guarda en una cola en disco y las reenvía a Supabase cada cierto tiempo, conservando la hora real
  * de cada una. No sabe nada de la base de datos: recibe `ingest` (en producción es `handleIngest` del dashboard, con
  * toda su validación, alertas y órdenes; en las pruebas, un simulacro).
  *
@@ -61,6 +61,13 @@ const json = (res: http.ServerResponse, status: number, body: unknown, headers: 
   const text = JSON.stringify(body)
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(text), 'Cache-Control': 'no-store', ...headers })
   res.end(text)
+}
+
+/** Respuesta a una trama, independiente del transporte (HTTP o MQTT). */
+export interface FrameReply {
+  status: number
+  body: unknown
+  retryAfterS?: number
 }
 
 export class Gateway {
@@ -142,24 +149,25 @@ export class Gateway {
     return Buffer.concat(chunks).toString('utf8')
   }
 
-  private async onIngest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const authorization = req.headers.authorization ?? null
+  /**
+   * Procesa UNA trama venga de donde venga (HTTP o MQTT): valida, la procesa al momento si es la primera de ese nodo
+   * o la encola, y devuelve la respuesta que debe recibir el nodo. `raw === null` = cuerpo demasiado grande.
+   */
+  async ingestFrame(authorization: string | null, raw: string | null, ip: string | null): Promise<FrameReply> {
     const token = parseBearer(authorization)
-    if (!token) return json(res, 401, { ok: false, error: 'unauthorized' })
-    const raw = await this.readBody(req)
-    if (raw === null) return json(res, 413, { ok: false, error: 'too_large' })
+    if (!token) return { status: 401, body: { ok: false, error: 'unauthorized' } }
+    if (raw === null) return { status: 413, body: { ok: false, error: 'too_large' } }
     let parsedJson: unknown
     try {
       parsedJson = JSON.parse(raw)
     } catch {
-      return json(res, 400, { ok: false, error: 'invalid', detalle: ['JSON inválido'] })
+      return { status: 400, body: { ok: false, error: 'invalid', detalle: ['JSON inválido'] } }
     }
     const parsed = frameSchema.safeParse(parsedJson)
     if (!parsed.success) {
       const detalle = parsed.error.issues.slice(0, 6).map((i) => `${i.path.join('.') || 'cuerpo'}: ${i.message}`)
-      return json(res, 400, { ok: false, error: 'invalid', detalle })
+      return { status: 400, body: { ok: false, error: 'invalid', detalle } }
     }
-    const ip = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '') || null
     const key = hashToken(token).toString('hex')
     const entry = this.cache.get(key)
 
@@ -170,14 +178,23 @@ export class Gateway {
         result = await this.o.ingest({ authorization: authorization!, rawBody: raw, ip, now: new Date(this.o.now()) })
       } catch (e) {
         this.o.log(`PRIMERA TRAMA: sin conexión con Supabase (${(e as Error).message})`)
-        return json(res, 503, { ok: false, error: 'server' })
+        return { status: 503, body: { ok: false, error: 'server' } }
       }
       this.remember(key, result)
-      return json(res, result.status, result.body, result.status === 429 ? { 'Retry-After': String(result.retryAfterS) } : {})
+      return { status: result.status, body: result.body, retryAfterS: result.status === 429 ? result.retryAfterS : undefined }
     }
 
     this.enqueue({ ts: this.o.now(), ip, authorization: authorization!, rawBody: raw })
-    return json(res, 200, this.cachedBody(entry))
+    return { status: 200, body: this.cachedBody(entry) }
+  }
+
+  private async onIngest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const authorization = req.headers.authorization ?? null
+    if (!parseBearer(authorization)) return json(res, 401, { ok: false, error: 'unauthorized' })   // sin token no se lee el cuerpo
+    const ip = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '') || null   // antes de leer: con un cuerpo enorme el socket se destruye
+    const raw = await this.readBody(req)
+    const r = await this.ingestFrame(authorization, raw, ip)
+    return json(res, r.status, r.body, r.retryAfterS !== undefined ? { 'Retry-After': String(r.retryAfterS) } : {})
   }
 
   server(): http.Server {

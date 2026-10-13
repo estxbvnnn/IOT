@@ -1,0 +1,63 @@
+# Raspberry Pi: Mosquitto (MQTT) + pasarela hacia Supabase.
+#
+#   NodeMCU ──MQTT :1883──►  mosquitto ──►  gateway ──(cola en disco)──HTTPS/Postgres──►  Supabase
+#
+#   docker compose up -d --build        arranca todo (y se reinicia solo con la Pi)
+#   docker compose logs -f gateway      ver lo que llega y lo que se envía
+#   docker compose down                 detiene (la cola y la clave de Mosquitto se conservan en volúmenes)
+#
+# Requisitos: .env (MQTT_USER / MQTT_PASS) y dashboard/.env.local (credenciales del rol iot_app de Supabase).
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    environment:
+      MQTT_USER: ${MQTT_USER:?defina MQTT_USER en .env}
+      MQTT_PASS: ${MQTT_PASS:?defina MQTT_PASS en .env}
+    # Crea el archivo de usuarios con las credenciales de .env y arranca el broker.
+    command:
+      - sh
+      - -c
+      - |
+        mosquitto_passwd -b -c /mosquitto/data/passwd "$$MQTT_USER" "$$MQTT_PASS"
+        chown mosquitto:mosquitto /mosquitto/data/passwd
+        chmod 600 /mosquitto/data/passwd
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u \"$$MQTT_USER\" -P \"$$MQTT_PASS\" -t '$$SYS/broker/uptime' -C 1 -W 3 >/dev/null"]
+      interval: 15s
+      timeout: 6s
+      retries: 4
+      start_period: 5s
+
+  gateway:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile.gateway
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    env_file:
+      - ./dashboard/.env.local          # DATABASE_* del rol iot_app (nunca el administrador)
+    environment:
+      MQTT_URL: mqtt://mosquitto:1883
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASS: ${MQTT_PASS}
+      GATEWAY_PORT: "3100"
+      GATEWAY_FORWARD_S: ${GATEWAY_FORWARD_S:-2}
+      TZ: ${TZ:-America/Santiago}
+    ports:
+      - "3100:3100"                      # solo para nodos que aún usen HTTP y para /api/health
+    volumes:
+      - gateway-data:/app/.gateway       # cola de tramas y últimas respuestas (sobreviven a reinicios)
+    stop_grace_period: 20s               # último envío a Supabase al detener
+
+volumes:
+  mosquitto-data:
+  gateway-data:
