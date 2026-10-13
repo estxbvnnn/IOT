@@ -25,11 +25,11 @@ describe.skipIf(!local)('bitácora: la cadena soporta escrituras concurrentes', 
     const N = 600
     await Promise.all(
       Array.from({ length: N }, (_, i) =>
-        audit(many, { actorLabel: `concurrencia:${i % 7}`, action: 'test.concurrent', target: `n:${i}`, detail: { i }, ip: null })),
+        audit(many, { actorLabel: `concurrencia:${i % 7}`, action: 'system.seed', target: `n:${i}`, detail: { i }, ip: null })),
     )
     const [v] = await app<{ checked: number; first_broken_id: number | null }[]>`select * from iot.verify_audit_chain()`
     expect(v!.first_broken_id).toBeNull()
-    const [n] = await app<{ n: number }[]>`select count(*)::int as n from iot.audit_log where action = 'test.concurrent'`
+    const [n] = await app<{ n: number }[]>`select count(*)::int as n from iot.audit_log where actor_label like 'concurrencia:%'`
     expect(n!.n).toBeGreaterThanOrEqual(N)
   })
 

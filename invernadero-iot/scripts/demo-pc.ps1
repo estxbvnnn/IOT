@@ -32,7 +32,7 @@ function Clave { -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 28 |
 if ($Detener) {
   Esperar-Docker
   if (Test-Path (Join-Path $tmp 'env')) { & docker @dc down -v 2>&1 | Out-Null }
-  Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'scripts[\\/]simulate\.ts' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+  Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'simulate\.ts' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }   # el simulador y su ventana
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
   Write-Host 'Demo detenida y borrada.' -ForegroundColor Green
   return
@@ -84,23 +84,27 @@ try {
   try {
     Write-Host '== Sembrando el predio, usuarios y 48 h de historial de demostración...' -ForegroundColor Cyan
     npx tsx scripts/db-seed.ts --history 48 | Select-String 'predio|nodos|usuarios|historial'
-    Copy-Item '.demo-devices.json' (Join-Path $tmp 'devices.json') -Force
   } finally {
     foreach ($f in '.demo-credentials.md', '.demo-devices.json') {
       if (Test-Path (Join-Path $respaldo $f)) { Copy-Item (Join-Path $respaldo $f) . -Force } else { Remove-Item $f -Force -ErrorAction SilentlyContinue }
     }
   }
+  # Tokens PROPIOS de la demo: se asignan por SQL a los nodos sembrados (no se usa .demo-devices.json, que puede ser el real).
+  function Token43 { -join ((48..57) + (65..90) + (97..122) + 45 + 95 | Get-Random -Count 43 | ForEach-Object { [char]$_ }) }
+  $tokens = [ordered]@{}
+  $sql = ''
+  foreach ($g in 1..10) { $t = Token43; $tokens["I$g"] = $t; $sql += "update iot.nodes set token_hash = sha256(convert_to('$t','UTF8')), token_prefix = left('$t',6) where greenhouse_id = $g; " }
+  $t = Token43; $tokens['MAST'] = $t; $sql += "update iot.nodes set token_hash = sha256(convert_to('$t','UTF8')), token_prefix = left('$t',6) where kind = 'mast'; "
   if ($NodoReal) {
-    $ino = Get-Content (Join-Path $proyecto 'firmware
-ododefinitivo
-ododefinitivo.ino') -Raw
+    $ino = Get-Content (Join-Path $proyecto 'firmware\nododefinitivo\nododefinitivo.ino') -Raw
     if ($ino -notmatch '#define\s+DEVICE_TOKEN\s+"([A-Za-z0-9_-]{20,64})"') { throw 'No encontré un DEVICE_TOKEN válido en el sketch.' }
     $tokenReal = $Matches[1]
     Write-Host '== Registrando el token de la NodeMCU real como nodo de I1 (reporte cada 5 s)...' -ForegroundColor Cyan
-    $sql = "update iot.nodes set token_hash = sha256(convert_to('$tokenReal','UTF8')), token_prefix = left('$tokenReal',6) where greenhouse_id = 1; update iot.thresholds set interval_s = 5 where greenhouse_id = 1;"
-    $sql | & docker @dc exec -T postgres psql -U postgres -d iot -q
-    if ($LASTEXITCODE -ne 0) { throw 'No se pudo registrar el token del nodo real.' }
+    $tokens.Remove('I1')
+    $sql += "update iot.nodes set token_hash = sha256(convert_to('$tokenReal','UTF8')), token_prefix = left('$tokenReal',6) where greenhouse_id = 1; update iot.thresholds set interval_s = 5 where greenhouse_id = 1; "
   }
+  $sql | & docker @dc exec -T postgres psql -U postgres -d iot -q
+  if ($LASTEXITCODE -ne 0) { throw 'No se pudieron asignar los tokens de los nodos de la demo.' }
   # Administrador de la demo con clave conocida
   $clave = 'Demo-' + (Clave)
   $script = Join-Path $tmp 'mkadmin.ts'
@@ -120,11 +124,11 @@ main().catch((e) => { console.error(e.message); process.exit(1) })
 
   if (-not $SinSimulador) {
     Write-Host '== Arrancando el simulador de nodos (ventana aparte)...' -ForegroundColor Cyan
-    # El simulador toma los tokens de la base de la demo (los que acaba de sembrar), no los de .demo-devices.json real.
-    $tokens = (Get-Content (Join-Path $tmp 'devices.json') | ConvertFrom-Json)
-    $add = ($tokens.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
-    $soloOtros = ''; if ($NodoReal) { $soloOtros = ' --only I2,I3,I4,I5,I6,I7,I8,I9,I10,MAST' }
-    $cmd = "Set-Location '$dash'; `$env:DATABASE_HOST='127.0.0.1'; `$env:DATABASE_PORT='55432'; `$env:DATABASE_NAME='iot'; `$env:DATABASE_SSL_MODE='disable'; `$env:DATABASE_USER='iot_app'; `$env:DATABASE_PASSWORD='$($cfg['IOT_APP_PASSWORD'])'; npx tsx scripts/simulate.ts --url http://127.0.0.1:3000 --scenario demo --fast --add '$add'$soloOtros"
+    # El simulador usa los tokens que se acaban de asignar a la base de la demo (con -NodoReal, I1 queda para la placa real).
+    $add = ($tokens.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ','
+    $soloOtros = ''; $fast = ' --fast'   # --fast fija el reporte de los nodos en 15 s mientras corre el simulador
+    if ($NodoReal) { $soloOtros = ' --only I2,I3,I4,I5,I6,I7,I8,I9,I10,MAST'; $fast = '' }   # con la placa real se respeta su reporte de 5 s
+    $cmd = "Set-Location '$dash'; `$env:DATABASE_HOST='127.0.0.1'; `$env:DATABASE_PORT='55432'; `$env:DATABASE_NAME='iot'; `$env:DATABASE_SSL_MODE='disable'; `$env:DATABASE_USER='iot_app'; `$env:DATABASE_PASSWORD='$($cfg['IOT_APP_PASSWORD'])'; npx tsx scripts/simulate.ts --url http://127.0.0.1:3000 --scenario demo$fast --add '$add'$soloOtros"
     Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmd
   }
 } finally { Pop-Location }

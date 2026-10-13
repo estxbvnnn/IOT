@@ -15,6 +15,7 @@ más las imágenes construidas y arrancadas para **arm64** (la arquitectura de l
 | **B. Datos reales** | `bootstrap` desde la Supabase real (solo lectura) a una base local limpia: 2.048 filas, bitácora íntegra, token del nodo conservado, esquema idéntico en las 13 tablas; simulacro de sincronización (no escribe) | ✅ |
 | **C. Resiliencia** | `kill -9` (caída real, no `docker kill`) de gateway, mosquitto, postgres, dashboard, gateway+postgres; `docker restart` de todo; `down`+`up` (reinicio de la Pi), con 3 nodos transmitiendo | ✅ las lecturas vuelven en **4–5 s** cada vez · 0 duplicados · 0 errores en los registros |
 | **D. Seguridad** | puertos publicados, MQTT sin clave / clave mala, cabeceras, cookie, secretos en las imágenes, usuario de los contenedores, rotación de registros | ✅ con 1 límite documentado (ver abajo) |
+| **E. Estabilidad (20 min)** | 10 nodos transmitiendo cada 5 s (2.400 tramas) midiendo memoria/CPU de cada contenedor, tamaño de la base y latencia | ✅ 2.399/2.400 respuestas (la restante fue un `429 rate_limited` por una trama que mi propia prueba HTTP metió en el mismo segundo: el límite de 1 trama/s por nodo funcionando) · latencia mediana 12 ms, p95 48 ms, máx 203 ms · **memoria plana**: pasarela 67 MiB, dashboard 79 MiB, postgres ~80–98 MiB, mosquitto ~5 MiB · CPU < 1 % en reposo |
 | **F. arm64 (Pi)** | `buildx --platform linux/arm64` de las dos imágenes; arranque emulado: migraciones, dashboard (`aarch64`), `/api/health`, API v1 | ✅ construye (122 s y 336 s emulado) y funciona |
 | **I. Entrega** | `scripts/deploy-pi.ps1` (sintaxis, armado del `.env` con contraseñas con `$ # @ / + =`, ensayo del camino completo contra datos reales), `scripts/demo-pc.ps1`, `scripts/prueba-hardware.ps1`, runbook y plan B | ✅ ensayado (el despliegue sobre la Pi misma queda para la entrega) |
 | **G. Hardware real** | NodeMCU con sensores y bomba | ⏳ pendiente: requiere la placa conectada (guía en `entrega.md` y `scripts/prueba-hardware.ps1`) |
@@ -58,6 +59,10 @@ Nota metodológica: `docker kill` **no** vale como prueba de caída, porque Dock
 - **Límites conocidos**: HTTP/MQTT sin cifrar en la red local (aceptable en red de confianza; ver `seguridad.md`). `npm audit` marca 2 avisos altos en dependencias: `next` (envenenamiento de caché de páginas SSG/ISR y de «Draft Mode» con `use cache`: este
   proyecto no usa esas funciones, todas sus páginas son dinámicas; hay parche menor 16.4.0) y `source-map-js` (herramienta de desarrollo). Se dejaron sin actualizar para no introducir cambios la víspera de la entrega.
 - **El repositorio versiona credenciales a propósito** (decisión del equipo): debe ser privado y conviene rotar claves de Supabase, WiFi y MQTT después de la entrega si el código se comparte.
+
+## Crecimiento de la base (estimación)
+Con el reporte por defecto de 300 s los 11 nodos escriben ~3.800 lecturas/día (insignificante). En el peor caso de la demo (10 nodos cada 5 s) son ~190.000/día (≈ 30 MB/día con índices); la retención
+(`npm run db:retention`) compacta a promedios horarios lo que supere 90 días. La SD de la Pi tiene ~21 GB libres: sobra con cualquiera de los dos ritmos.
 
 ## Riesgos residuales (para la entrega)
 

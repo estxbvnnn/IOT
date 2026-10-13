@@ -74,8 +74,11 @@ def leer(path):
 env = leer('.env'); loc = leer('dashboard/.env.local')
 def gen(): return secrets.token_urlsafe(24)
 for k in ('POSTGRES_PASSWORD', 'IOT_APP_PASSWORD'): env.setdefault(k, gen())
-if len(env.get('APP_SECRET', '')) < 32: env['APP_SECRET'] = secrets.token_urlsafe(48)
-env.setdefault('TZ', 'America/Santiago'); env.setdefault('SYNC_INTERVAL_S', '300'); env.setdefault('MFA_REQUIRED_ROLES', '')
+# APP_SECRET cifra las semillas 2FA de los usuarios: se REUTILIZA el que ya usaba el sistema anterior (dashboard/.env.local) para no dejar sin entrar a quien tenga 2FA.
+if len(env.get('APP_SECRET', '')) < 32:
+    env['APP_SECRET'] = loc['APP_SECRET'] if len(loc.get('APP_SECRET', '')) >= 32 else secrets.token_urlsafe(48)
+if 'MFA_REQUIRED_ROLES' not in env: env['MFA_REQUIRED_ROLES'] = loc.get('MFA_REQUIRED_ROLES', '')
+env.setdefault('TZ', 'America/Santiago'); env.setdefault('SYNC_INTERVAL_S', '300')
 if not env.get('SUPABASE_DB_HOST') and loc.get('DATABASE_HOST'):
     env.update({'SUPABASE_DB_HOST': loc['DATABASE_HOST'], 'SUPABASE_DB_PORT': loc.get('DATABASE_PORT', '5432'), 'SUPABASE_DB_NAME': loc.get('DATABASE_NAME', 'postgres'),
                 'SUPABASE_DB_USER': loc['DATABASE_USER'], 'SUPABASE_DB_PASSWORD': loc['DATABASE_PASSWORD'], 'SUPABASE_DB_SSL_MODE': loc.get('DATABASE_SSL_MODE', 'verify')})
