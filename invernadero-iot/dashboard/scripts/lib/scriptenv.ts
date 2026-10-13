@@ -50,6 +50,20 @@ export function appDb(max = 3): Db {
   )
 }
 
+/** Conexión con el rol de la aplicación (iot_app) de SUPABASE: destino de la copia desde la Pi (variables SUPABASE_DB_*). */
+export function supabaseDb(max = 2): Db {
+  return connect(
+    {
+      host: requireEnv('SUPABASE_DB_HOST'),
+      port: Number(process.env.SUPABASE_DB_PORT ?? 5432),
+      database: process.env.SUPABASE_DB_NAME ?? 'postgres',
+      user: requireEnv('SUPABASE_DB_USER'),
+      password: requireEnv('SUPABASE_DB_PASSWORD'),
+    },
+    { max, sslMode: parseSslMode(process.env.SUPABASE_DB_SSL_MODE) ?? 'verify', applicationName: 'invernadero-iot-sync' },
+  )
+}
+
 export function randomSecret(bytes = 32): string {
   return crypto.randomBytes(bytes).toString('base64url')
 }

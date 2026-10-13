@@ -1,8 +1,5 @@
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { Gateway, type IngestFn } from '../../scripts/lib/gateway-core'
+import { describe, expect, it } from 'vitest'
+import { Gateway } from '../../scripts/lib/gateway-core'
 import { formatRx, parseTx } from '../../scripts/lib/gateway-mqtt'
 import type { IngestResult } from '@/lib/services/ingest'
 
@@ -45,35 +42,28 @@ describe('MQTT: formato de los mensajes', () => {
 })
 
 describe('MQTT: la trama pasa por el mismo núcleo que HTTP', () => {
-  let dir = ''
-  afterEach(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); dir = '' })
-  const make = (ingest: IngestFn) => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gwm-'))
-    return new Gateway({ ingest, spoolDir: path.join(dir, 'cola'), cachePath: path.join(dir, 'respuestas.json') })
-  }
-
-  it('primera trama: se procesa ya y vuelve la configuración; la siguiente se encola', async () => {
+  it('se procesa al instante contra la base y vuelve la configuración real', async () => {
     let calls = 0
-    const gw = make(async () => { calls++; return ok() })
-    const tx = parseTx('invernadero/n1/tx', `${TOKEN}\n${FRAME}`)!
+    const gw = new Gateway({ ingest: async () => { calls++; return ok() } })
+    const tx = parseTx('invernadero/n1/tx', `${TOKEN}
+${FRAME}`)!
     const first = await gw.ingestFrame(tx.authorization, tx.raw, null)
     expect(first.status).toBe(200)
     expect(first.body).toMatchObject({ ok: true, cfg: { ver: 4 } })
-    const second = await gw.ingestFrame(tx.authorization, tx.raw, null)
-    expect(second.status).toBe(200)
-    expect(calls).toBe(1)
-    expect(gw.spoolSize()).toBe(1)
+    expect((await gw.ingestFrame(tx.authorization, tx.raw, null)).status).toBe(200)
+    expect(calls).toBe(2)
+    expect(formatRx(first)).toBe(`200 0\n${JSON.stringify(first.body)}`)
   })
 
-  it('token inválido: el 401 llega al nodo y no se guarda nada', async () => {
-    const gw = make(async () => ({ status: 401, body: { ok: false, error: 'unauthorized' } }) as IngestResult)
-    const tx = parseTx('invernadero/n1/tx', `${TOKEN}\n${FRAME}`)!
+  it('token inválido: el 401 llega al nodo', async () => {
+    const gw = new Gateway({ ingest: async () => ({ status: 401, body: { ok: false, error: 'unauthorized' } }) as IngestResult })
+    const tx = parseTx('invernadero/n1/tx', `${TOKEN}
+${FRAME}`)!
     expect((await gw.ingestFrame(tx.authorization, tx.raw, null)).status).toBe(401)
-    expect(gw.spoolSize()).toBe(0)
   })
 
-  it('trama inválida (400), demasiado grande (413) y Supabase caído (503)', async () => {
-    const gw = make(async () => { throw new Error('sin red') })
+  it('trama inválida (400), demasiado grande (413), sin token (401) y base caída (503)', async () => {
+    const gw = new Gateway({ ingest: async () => { throw new Error('sin base') } })
     expect((await gw.ingestFrame(`Bearer ${TOKEN}`, '{"v":1}', null)).status).toBe(400)
     expect((await gw.ingestFrame(`Bearer ${TOKEN}`, 'no json', null)).status).toBe(400)
     expect((await gw.ingestFrame(`Bearer ${TOKEN}`, null, null)).status).toBe(413)

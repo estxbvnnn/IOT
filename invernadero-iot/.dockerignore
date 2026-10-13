@@ -1,0 +1,20 @@
+# Contexto de construcción = invernadero-iot/. Solo debe entrar lo necesario para las imágenes (dashboard/ y supabase/migrations).
+**/node_modules
+**/.next
+**/.gateway
+**/*.tsbuildinfo
+**/coverage
+**/.git
+
+# Credenciales: se pasan por variables de entorno en tiempo de ejecución, nunca dentro de la imagen
+**/.env
+**/.env.*
+!**/.env.example
+**/.demo-*
+
+dashboard/tests
+firmware
+docs
+**/Dockerfile*
+docker-compose*.yml
+*.md

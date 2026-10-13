@@ -21,11 +21,13 @@ y un **dashboard web en TypeScript** con control de acceso por rol.
 | Carpeta | Qué es |
 |---|---|
 | `firmware/nodo_invernadero_unico/` | **El firmware para ESP8266 (NodeMCU, D1 mini) en UN solo archivo `.ino`**, para Arduino IDE y sin depender de otros archivos: DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Es el que se carga en la placa. |
+| `firmware/nododefinitivo/` | **El firmware del nodo en uso**: NodeMCU (ESP8266) con DHT22 + YL-38 + bomba por relé, riego autónomo y envío por **MQTT** a la Raspberry Pi (o HTTP). Es el que se carga en la placa. |
+| `docker-compose.yml`, `docker/` | **La Raspberry Pi** como sistema completo en la red local: Mosquitto + pasarela + PostgreSQL + dashboard + API y copia a Supabase. Guía: [`docs/gateway-raspberry.md`](docs/gateway-raspberry.md). |
 | `firmware/nodo_invernadero_unico_esp32/` | El mismo firmware de un solo archivo para **ESP32** (DevKit V1 o Heltec V2). |
 | `firmware/nodo_invernadero/` | La versión modular de ESP32 (la fuente de la lógica compartida, con pruebas de host). Guía completa en [`docs/hardware.md`](docs/hardware.md). |
 | `dashboard/` | Aplicación web **Next.js 16 + React 19 + TypeScript estricto**: API de recepción de los nodos, paneles por rol, gráficos, alertas, órdenes de riego, bitácora. |
 | `supabase/migrations/` | Esquema SQL (PostgreSQL 17): tablas, permisos mínimos, bitácora inmutable. |
-| `docs/` | [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`hardware.md`](docs/hardware.md), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
+| `docs/` | [`gateway-raspberry.md`](docs/gateway-raspberry.md) (la Pi), [`api-v1.md`](docs/api-v1.md) (API REST del dashboard), [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`hardware.md`](docs/hardware.md), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
 
 **¿Por qué TypeScript?** Es el lenguaje con mejor relación entre productividad, seguridad de tipos y ecosistema para un panel web:
 los mismos tipos viajan del acceso a datos a la interfaz, y el compilador (modo `strict`) detecta errores antes de ejecutar. El
@@ -33,20 +35,24 @@ firmware queda en C++ (Arduino) porque el ESP32 lo exige.
 
 ## Arquitectura
 
+La **Raspberry Pi 5** es el sistema completo y **funciona sin internet** (todo en la red local); cada 5 minutos copia los datos a Supabase.
+
 ```
- ┌────────────────┐   HTTPS · JSON · Bearer   ┌─────────────────────────┐   SQL sobre TLS verificado   ┌────────────────────┐
- │ Nodo ESP32 ×N  │ ────────────────────────▶ │  Dashboard (Next.js)    │ ───────────────────────────▶ │ Supabase Postgres  │
- │ DHT22 · YL-38  │ ◀──── cfg + órdenes ───── │  /api/ingest · páginas  │   rol iot_app (mín. priv.)   │ esquema privado iot│
- │ relé → bomba   │                           │  sesiones · RBAC · CSP  │                              │ RLS + bitácora     │
- └────────────────┘                           └─────────────────────────┘                              └────────────────────┘
-        ▲  (o el simulador: `npm run demo`)               ▲
-        └── riega solo aunque no haya red                 └── navegador: dueño · admin · agrónomo · operador · técnico
+ NodeMCU (ESP8266) ×N                Raspberry Pi 5 (docker compose)                                              Nube
+ DHT22 · YL-38 · relé → bomba   MQTT   ┌───────────────────────────────────────────────────────┐
+ riega solo aunque no haya red ──────▶ │ mosquitto ─▶ gateway ─▶ PostgreSQL local ◀─ dashboard │ ◀── navegador / apps (misma red)
+                               ◀────── │  (broker)    (Node)      (rol iot_app)       :3000     │      http://IP_DE_LA_PI:3000
+                              cfg + órdenes                            │            + API /api/v1│      API REST con clave Bearer
+                                       │                               └── sync cada 5 min ──────┼──HTTPS──▶ Supabase (copia, 1 sentido)
+                                       └───────────────────────────────────────────────────────┘
 ```
 
-Las cuatro capas del informe se conservan: **percepción y acción** (nodos), **red** (HTTP en lugar de LoRaWAN, ver más abajo),
-**procesamiento** (API + reglas + alertas) y **aplicación** (dashboard). El riego **no depende del servidor**: cada nodo decide con su
-propia lectura y aplica límites duros (corte a 30 s, espera de 5 min, bloqueo por temperatura); el servidor solo ajusta umbrales y
-envía órdenes manuales.
+Las cuatro capas del informe se conservan: **percepción y acción** (nodos), **red** (MQTT en la red local en lugar de LoRaWAN, ver más abajo),
+**procesamiento** (pasarela + reglas + alertas + base local) y **aplicación** (dashboard y API en la Pi). El riego **no depende de la Pi**: cada nodo decide
+con su propia lectura y aplica límites duros (corte a 30 s, espera de 5 min, bloqueo por temperatura); el servidor solo ajusta umbrales y envía órdenes manuales.
+Detalle, instalación y qué pasa cuando algo falla: [`docs/gateway-raspberry.md`](docs/gateway-raspberry.md) · API: [`docs/api-v1.md`](docs/api-v1.md).
+
+> El dashboard también puede correr suelto en un PC contra Supabase (`npm run dev`, abajo): es el modo de desarrollo y de demostración con el simulador.
 
 ## Puesta en marcha
 
@@ -125,10 +131,15 @@ encadenado y verificación desde la interfaz**. El detalle, control por control 
 
 ```bash
 cd dashboard
-npm test            # 160+ pruebas unitarias (controlador de riego, alertas, TOTP con vectores RFC 6238, scrypt, RBAC, escalas de gráficos…)
-npm run test:db     # ~80 pruebas de integración contra TU Supabase (cada una se revierte). Tarda ~10 min; no las ejecutes con el simulador corriendo.
-cd ../firmware/test && ./ejecutar_pruebas.sh     # lógica del nodo compilada en el PC (ver firmware/README.md)
+npm run typecheck   # TypeScript estricto
+npm test            # 190 pruebas unitarias (controlador de riego, alertas, TOTP, scrypt, RBAC, pasarela MQTT/HTTP, claves de API…)
+npm run test:db     # 103 pruebas de integración contra PostgreSQL (cada una se revierte): esquema, permisos, ingesta, órdenes, bitácora,
+                    # claves de API y la sincronización con Supabase (segunda base temporal). Funcionan en cualquier PostgreSQL 17, no solo Supabase:
+                    #   docker compose up -d postgres  (con el puerto publicado en 127.0.0.1) y las variables DATABASE_* / DATABASE_ADMIN_*
+npm run e2e -- --url http://127.0.0.1:3000 --users cuentas.json   # interfaz web en Edge/Chrome: cada rol, riego en 2 pasos, CSV, bitácora (63 comprobaciones)
+cd ../firmware/test && ./ejecutar_pruebas.sh     # 70 pruebas de la lógica del nodo compilada en el PC (ver firmware/README.md)
 ```
+Resultados completos de la última ronda (incluye caídas de servicios, seguridad, arm64 y prueba con 10 nodos a la vez): [`docs/pruebas.md`](docs/pruebas.md).
 
 ## Decisiones y hallazgos sobre el informe
 

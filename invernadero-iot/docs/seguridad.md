@@ -55,7 +55,22 @@ Certificado de cliente (mTLS), inicio de sesión único y biometría móvil son 
 * La bitácora redacta claves, tokens y secretos antes de guardar.
 * Los mensajes que envían los nodos (p. ej. el detalle de un acuse) se tratan como datos no confiables: solo se muestran como texto.
 
+## Raspberry Pi: red local, MQTT y API (13 oct 2026)
+
+Controles que se **probaron** (ver [`pruebas.md`](pruebas.md)):
+* **MQTT con usuario y clave**: Mosquitto rechaza conexiones anónimas y con clave incorrecta (`not authorised`). La identidad real del nodo es su **token** (256 bits, solo se guarda su SHA-256), que viaja dentro del mensaje.
+* **La base de datos no se publica**: del compose solo salen 1883 (MQTT), 3000 (dashboard/API) y 3100 (pasarela HTTP). PostgreSQL solo es visible para los demás contenedores.
+* **Claves de API** (`/api/v1`): cada una actúa con el rol y los sectores de su usuario, se guarda solo su SHA-256, se revoca al instante, deja de servir si se desactiva el usuario y **no puede pertenecer al súper administrador** (que se salta salvaguardas de riego). 401 sin clave, 403 sin permiso, 404 fuera del alcance (no revela que existe), 415 sin `Content-Type: application/json` (anti-CSRF), 429 con demasiados intentos.
+* **Riego manual por la API**: mantiene el paso 2 (reingreso de la contraseña del usuario); la clave sola no basta para activar la bomba.
+* Entradas hostiles (`';drop table…`, `../`, `%00`, JSON roto o de 10 KB): 404/400/413, sin efecto.
+* Las imágenes no contienen `.env` ni credenciales; los servicios propios corren como usuario `node` (no root) y los registros rotan (3 × 10 MB por servicio).
+
+Límites conocidos (decisiones de la red local):
+* **HTTP y MQTT sin cifrar dentro de la red local** (`FORCE_HTTPS=false`; la cookie de sesión es `HttpOnly` y `SameSite=Lax`, sin `Secure`). Es aceptable en una red de confianza; si no lo es, poner un proxy HTTPS delante (`FORCE_HTTPS=true`) y TLS en Mosquitto. **No exponga 1883, 3000 ni 3100 a internet.**
+* La copia a Supabase usa TLS verificado y el rol limitado `iot_app`. En la Pi quedan en `.env` (modo 600) las credenciales de ese rol; las del administrador de Supabase **no** deben copiarse a la Pi.
+* El repositorio versiona credenciales a propósito (decisión del equipo): debe ser **privado**, y conviene rotar las claves de Supabase, WiFi y MQTT después de la entrega si el código se comparte.
+
 ## No cubierto por el código
 
 VLAN/cortafuegos MikroTik · VPN WireGuard · certificados de cliente X.509 · elemento seguro ATECC608A · respaldo diario cifrado propio ·
-LoRaWAN/ChirpStack/Mosquitto/ThingsBoard (reemplazados por HTTP + Supabase, ver README) · protección contra denegación de servicio a nivel de red.
+LoRaWAN/ChirpStack/ThingsBoard (reemplazados por MQTT en la red local + la Pi, ver README) · protección contra denegación de servicio a nivel de red.

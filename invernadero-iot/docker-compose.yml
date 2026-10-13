@@ -1,14 +1,78 @@
-# Raspberry Pi: Mosquitto (MQTT) + pasarela hacia Supabase.
+# Raspberry Pi: sistema completo que funciona SIN internet (todo en la red local) y copia a Supabase cada 5 min.
 #
-#   NodeMCU ──MQTT :1883──►  mosquitto ──►  gateway ──(cola en disco)──HTTPS/Postgres──►  Supabase
+#   NodeMCU ──MQTT :1883──► mosquitto ──► gateway ──► postgres (local) ◄── dashboard :3000  (+ API /api/v1)
+#                                                         │
+#                                                         └── sync (cada SYNC_INTERVAL_S) ──HTTPS──► Supabase (copia en la nube)
 #
 #   docker compose up -d --build        arranca todo (y se reinicia solo con la Pi)
-#   docker compose logs -f gateway      ver lo que llega y lo que se envía
-#   docker compose down                 detiene (la cola y la clave de Mosquitto se conservan en volúmenes)
+#   docker compose logs -f gateway      ver lo que llega de los nodos        (también: dashboard, sync, postgres)
+#   docker compose down                 detiene (los datos viven en volúmenes y se conservan)
 #
-# Requisitos: .env (MQTT_USER / MQTT_PASS) y dashboard/.env.local (credenciales del rol iot_app de Supabase).
+# Primera vez: ver docs/gateway-raspberry.md (arranque inicial con `docker compose run --rm bootstrap`).
+# Requisitos: .env (ver .env.example). La base local NO se publica a la red: solo la ven los demás contenedores.
+
+x-tools: &tools
+  build:
+    context: .
+    dockerfile: dashboard/Dockerfile.gateway
+  image: invernadero-iot-tools
+
+x-db-app: &db-app                    # base local, con el rol de la aplicación (sin privilegios de administrador)
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: iot
+  DATABASE_SSL_MODE: disable         # tráfico interno entre contenedores
+  DATABASE_USER: iot_app
+  DATABASE_PASSWORD: ${IOT_APP_PASSWORD:?defina IOT_APP_PASSWORD en .env}
+
+x-logging: &log                     # los registros rotan (3 × 10 MB por servicio): una Pi sin atención no llena la SD
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-supabase: &supabase
+  SUPABASE_DB_HOST: ${SUPABASE_DB_HOST:-}
+  SUPABASE_DB_PORT: ${SUPABASE_DB_PORT:-5432}
+  SUPABASE_DB_NAME: ${SUPABASE_DB_NAME:-postgres}
+  SUPABASE_DB_USER: ${SUPABASE_DB_USER:-}
+  SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
+  SUPABASE_DB_SSL_MODE: ${SUPABASE_DB_SSL_MODE:-verify}
+
 services:
+  postgres:
+    logging: *log
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: iot
+      TZ: ${TZ:-America/Santiago}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d iot"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # Aplica las migraciones (supabase/migrations) y habilita el rol de la aplicación. Corre una vez por arranque y termina.
+  migrate:
+    logging: *log
+    <<: *tools
+    restart: "no"
+    command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]
+    environment:
+      <<: *db-app
+      DATABASE_ADMIN_USER: postgres
+      DATABASE_ADMIN_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   mosquitto:
+    logging: *log
     image: eclipse-mosquitto:2
     restart: unless-stopped
     ports:
@@ -35,29 +99,96 @@ services:
       retries: 4
       start_period: 5s
 
+  # Recibe las tramas de los nodos (MQTT, o HTTP en :3100) y las guarda al instante en la base local.
   gateway:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile.gateway
+    logging: *log
+    <<: *tools
     restart: unless-stopped
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-    env_file:
-      - ./dashboard/.env.local          # DATABASE_* del rol iot_app (nunca el administrador)
     environment:
+      <<: *db-app
       MQTT_URL: mqtt://mosquitto:1883
       MQTT_USER: ${MQTT_USER}
       MQTT_PASS: ${MQTT_PASS}
       GATEWAY_PORT: "3100"
-      GATEWAY_FORWARD_S: ${GATEWAY_FORWARD_S:-2}
       TZ: ${TZ:-America/Santiago}
     ports:
-      - "3100:3100"                      # solo para nodos que aún usen HTTP y para /api/health
-    volumes:
-      - gateway-data:/app/.gateway       # cola de tramas y últimas respuestas (sobreviven a reinicios)
-    stop_grace_period: 20s               # último envío a Supabase al detener
+      - "3100:3100"                    # solo para nodos que usen HTTP en vez de MQTT, y /api/health
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Interfaz web y API REST (/api/v1) para toda la red local: http://IP_DE_LA_PI:3000
+  dashboard:
+    logging: *log
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.dashboard
+    image: invernadero-iot-dashboard
+    restart: unless-stopped
+    environment:
+      <<: *db-app
+      APP_SECRET: ${APP_SECRET:?defina APP_SECRET en .env (mínimo 32 caracteres)}
+      MFA_REQUIRED_ROLES: ${MFA_REQUIRED_ROLES:-}
+      FORCE_HTTPS: "false"             # red local por HTTP; con un proxy HTTPS delante, cámbielo a "true"
+      TZ: ${TZ:-America/Santiago}
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Copia a Supabase lo nuevo cada SYNC_INTERVAL_S (5 min). Sin internet no hace nada y reintenta; la Pi no se afecta.
+  sync:
+    logging: *log
+    <<: *tools
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "scripts/sync.ts"]
+    environment:
+      <<: [*db-app, *supabase]
+      SYNC_INTERVAL_S: ${SYNC_INTERVAL_S:-300}
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # ---- Herramientas de una sola vez (no arrancan con `up`; se usan con `docker compose run --rm <nombre>`) ----
+
+  # Trae de Supabase a la base local lo que ya existe (usuarios, invernaderos, token del nodo, historial). Una sola vez.
+  #   docker compose run --rm bootstrap            (falla si la base local ya tiene datos; --force para reemplazar)
+  bootstrap:
+    logging: *log
+    <<: *tools
+    profiles: ["tools"]
+    restart: "no"
+    command: ["node", "--import", "tsx", "scripts/sync-bootstrap.ts"]
+    environment:
+      <<: [*db-app, *supabase]
+      DATABASE_ADMIN_USER: postgres
+      DATABASE_ADMIN_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Claves de la API REST:  docker compose run --rm tools crear correo@predio.local "Mi app"   |   listar   |   revocar <id>
+  tools:
+    logging: *log
+    <<: *tools
+    profiles: ["tools"]
+    restart: "no"
+    entrypoint: ["node", "--import", "tsx", "scripts/api-key.ts"]
+    environment:
+      <<: *db-app
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
+  postgres-data:
   mosquitto-data:
-  gateway-data:

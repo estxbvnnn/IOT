@@ -1,6 +1,6 @@
 /**
  * Transporte MQTT de la pasarela: el nodo publica su trama en Mosquitto (en la misma Raspberry Pi) y la pasarela se la
- * entrega al núcleo (`Gateway.ingestFrame`), que la guarda en la cola y la reenvía a Supabase. La respuesta
+ * entrega al núcleo (`Gateway.ingestFrame`), que la guarda al instante en la base PostgreSQL de la Pi. La respuesta
  * (configuración + órdenes) vuelve al nodo por otro tema.
  *
  *   Nodo ──publica──►  invernadero/<id>/tx   "TOKEN\n{trama JSON}"

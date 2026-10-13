@@ -5,6 +5,8 @@ const forceHttps = process.env.FORCE_HTTPS === 'true'
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // La imagen Docker de la Raspberry Pi corre el servidor autónomo (.next/standalone), sin node_modules completos.
+  output: 'standalone',
   // No revelar el framework en la cabecera X-Powered-By.
   poweredByHeader: false,
   // `npm run dev:lan`: sin esto Next bloquea sus recursos de desarrollo (hidratación y recarga en vivo) cuando la página

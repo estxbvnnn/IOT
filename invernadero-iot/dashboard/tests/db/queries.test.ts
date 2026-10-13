@@ -131,6 +131,7 @@ describe('detalle del invernadero, series y exportación', () => {
 
   it('exportar CSV: dueño, agrónomo y administrador sí; técnico y operador no', async () => {
     await inRollback(async (tx) => {
+      await seedHistory(tx, 1)                 // historial propio de la prueba: no depende de que haya datos sembrados
       const from = new Date(NOW.getTime() - 3 * 3600_000)
       const owner = await makeUser(tx, 'owner')
       const csv = await exportReadingsCsv(tx, owner.actor, 1, from, NOW)

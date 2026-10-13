@@ -1,70 +1,51 @@
 /**
- * PASARELA para la Raspberry Pi: recibe las tramas de los nodos por MQTT (Mosquitto) o HTTP, las guarda y las envía a Supabase
- * cada pocos segundos (5 s por defecto; reutiliza TODA la lógica del dashboard: validación, alertas, órdenes de riego y configuración).
+ * PASARELA para la Raspberry Pi: recibe las tramas de los nodos por MQTT (Mosquitto) o HTTP y las procesa al instante
+ * contra la base PostgreSQL de la Pi (reutiliza TODA la lógica del dashboard: validación, alertas, órdenes de riego y
+ * configuración). Funciona sin internet. La copia a Supabase la hace el servicio «sync» (scripts/sync.ts).
  *
  *   npm run gateway
  *
  * Variables (en .env.local o en el entorno):
  *   DATABASE_HOST / DATABASE_PORT / DATABASE_NAME / DATABASE_USER / DATABASE_PASSWORD / DATABASE_SSL_MODE
- *       las mismas credenciales del rol «iot_app» que usa el dashboard
- *   GATEWAY_PORT       puerto local para los nodos             (por defecto 3100)
- *   GATEWAY_FORWARD_S  segundos entre envíos a Supabase         (por defecto 2, mínimo 1)
- *   GATEWAY_SPOOL      carpeta de la cola y de la caché         (por defecto ./.gateway)
+ *       las credenciales del rol «iot_app» de la base local (las mismas que usa el dashboard)
+ *   GATEWAY_PORT       puerto local para los nodos que usen HTTP  (por defecto 3100)
  *   MQTT_URL           broker Mosquitto (p. ej. mqtt://mosquitto:1883); sin él, solo HTTP
  *   MQTT_USER / MQTT_PASS   credenciales del broker
  *
  * Los nodos MQTT publican en el broker (ver gateway-mqtt.ts); los nodos HTTP usan SERVER_URL = http://IP_DE_LA_PI:3100
  */
-import path from 'node:path'
 import { alertsSweep } from './lib/gateway-sweep'
 import { Gateway } from './lib/gateway-core'
 import { startMqtt } from './lib/gateway-mqtt'
-import { DASHBOARD_DIR, appDb } from './lib/scriptenv'
+import { appDb } from './lib/scriptenv'
 import { handleIngest } from '../src/lib/services/ingest'
 
 const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
 const log = (m: string) => console.log(`[${stamp()}] ${m}`)
 
 const port = Number(process.env.GATEWAY_PORT ?? 3100)
-const everyS = Math.max(1, Number(process.env.GATEWAY_FORWARD_S ?? 2))
-const dir = path.resolve(DASHBOARD_DIR, process.env.GATEWAY_SPOOL ?? '.gateway')
 
-const db = appDb(2)
-const gw = new Gateway({
-  ingest: (input) => handleIngest(db, input),
-  sweep: () => alertsSweep(db),
-  spoolDir: path.join(dir, 'cola'),
-  cachePath: path.join(dir, 'respuestas.json'),
-  log,
-})
+const db = appDb(4)
+const gw = new Gateway({ ingest: (input) => handleIngest(db, input), log })
 
 const server = gw.server()
-server.listen(port, '0.0.0.0', () => {
-  log(`Pasarela escuchando en el puerto ${port} · reenvío a Supabase cada ${everyS} s · cola en ${path.join(dir, 'cola')}`)
-  if (gw.spoolSize() > 0) log(`Hay ${gw.spoolSize()} tramas pendientes de un arranque anterior`)
-})
+server.listen(port, '0.0.0.0', () => log(`Pasarela escuchando en el puerto ${port} · base local ${process.env.DATABASE_HOST ?? '?'}`))
 
 const mqttLink = process.env.MQTT_URL
   ? startMqtt(gw, { url: process.env.MQTT_URL, username: process.env.MQTT_USER, password: process.env.MQTT_PASS, log })
   : null
 
-async function cycle(): Promise<void> {
-  const r = await gw.forward()
-  if (r.processed > 0 || r.dropped > 0 || r.failed) {
-    log(`Reenvío: ${r.processed} enviadas, ${r.dropped} descartadas, ${r.left} en cola${r.failed ? ' (SIN conexión con Supabase)' : ''}`)
-  }
-}
-const timer = setInterval(() => void cycle(), everyS * 1000)
+// «Nodo sin conexión»: debe detectarse aunque no llegue ninguna trama (con su propio límite interno de 1 vez cada 20 s).
+const sweepTimer = setInterval(() => void alertsSweep(db).catch((e: Error) => log(`BARRIDO: ${e.message}`)), 20_000)
 
 let closing = false
 async function shutdown(): Promise<void> {
   if (closing) return
   closing = true
-  clearInterval(timer)
-  log('Cerrando: último envío…')
+  clearInterval(sweepTimer)
+  log('Cerrando…')
   server.close()
   await mqttLink?.close()
-  await Promise.race([cycle(), new Promise((r) => setTimeout(r, 10_000))]).catch(() => undefined)
   await db.end({ timeout: 3 }).catch(() => undefined)
   process.exit(0)
 }

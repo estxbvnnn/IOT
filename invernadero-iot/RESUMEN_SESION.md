@@ -63,14 +63,14 @@ I1: `soil_sat` = 1 (definitivo 300), reporte cada 10 s (definitivo 300), `PRUEBA
 - Nunca se probó el riego automático con sensores reales.
 - Riesgos conocidos del firmware: si la placa se reinicia entre ejecutar una orden y enviar su acuse, el servidor puede reentregarla; sin sensor de nivel no hay protección contra bomba en seco.
 
-## 9. Raspberry Pi Pico W (agregado después)
+## 9. Raspberry Pi Pico W (agregado después) — ELIMINADO el 13 oct 2026 (ver sección 12)
 - Sketch nuevo: `firmware/nodo_pico_w/nodo_pico_w.ino`, derivado de `nododefinitivo.ino` (misma lógica de riego, protocolo, tabla Serial y riego automático). Compila con `arduino-cli compile --fqbn rp2040:rp2040:rpipicow` (core `rp2040:rp2040` 6.2.0 de Earle Philhower, instalado en `%LOCALAPPDATA%\Arduino15`).
 - Pines: DHT22 → GP2 (pin 4), YL-38 VCC → GP3 (pin 5), YL-38 AO → GP26/ADC0 (pin 31), relé IN → GP6 (pin 9), relé DC+ → VBUS (pin 40), BH1750 SDA/SCL → GP4/GP5.
 - Usa el mismo WiFi, SERVER_URL y DEVICE_TOKEN del NodeMCU: usar UNA sola placa a la vez (o crear otro nodo/token).
 - Un Raspberry Pi 4/5/Zero (Linux) NO ejecuta .ino; este sketch es solo para Pico W / Pico 2 W.
 - Aún NO probado en la placa real.
 
-## 10. Arquitectura final decidida: NodeMCU → Raspberry Pi 5 (gateway) → Supabase
+## 10. Arquitectura decidida el 7 oct: NodeMCU → Raspberry Pi 5 (gateway) → Supabase — REEMPLAZADA el 13 oct 2026 (ver sección 12)
 - Decidido con el usuario: la **Pi 5 es solo gateway** (no riega ni mide); recibe las tramas de la NodeMCU, las guarda y **cada 60 s las escribe directo en Supabase** (rol `iot_app`).
 - Implementado en `dashboard/scripts/gateway.ts` + `scripts/lib/gateway-core.ts` (reutiliza `handleIngest` del dashboard: validación, alertas, órdenes, cfg; conserva la hora real de cada trama con `now`). Cola en disco (`.gateway/cola`), respuestas (cfg + órdenes) en `.gateway/respuestas.json`. Comando: `npm run gateway` (puerto 3100). Guía: `docs/gateway-raspberry.md`; servicio: `dashboard/scripts/gateway.service`.
 - Pendiente del usuario: en la Pi instalar Node 22, copiar el proyecto, crear `dashboard/.env.local` (credenciales `iot_app`), arrancar `npm run gateway`, y en la NodeMCU cambiar `SERVER_URL` a `http://IP_DE_LA_PI:3100` y re-subir el sketch.
@@ -83,3 +83,15 @@ I1: `soil_sat` = 1 (definitivo 300), reporte cada 10 s (definitivo 300), `PRUEBA
 - El riego automático no arranca durante los primeros 20 s tras encender (`ARRANQUE_SIN_RIEGO_S`).
 - Espera entre riegos permitida en 0 (migración `0006_espera_sin_minimo.sql`; el nodo mantiene una pausa técnica de 3 s). I1 quedó con espera 0.
 - Eliminada `PRUEBA_SIN_DHT`.
+
+## 12. Cambio de arquitectura del 13 oct 2026: la Pi es el sistema completo (Postgres local + dashboard + API) y copia a Supabase cada 5 min
+- Flujo: NodeMCU --MQTT--> Mosquitto --> pasarela --> **PostgreSQL local de la Pi** <-- dashboard Next.js (:3000, API `/api/v1`); el servicio `sync` copia a Supabase cada 300 s (un solo sentido). **Funciona sin internet** en la red local.
+- La pasarela ya no tiene cola en disco ni caché: procesa cada trama al instante con `handleIngest` contra la base local (`scripts/gateway.ts`, `scripts/lib/gateway-core.ts`). El nodo recibe su cfg/órdenes reales en cada trama.
+- Nuevo: `docker-compose.yml` (postgres, migrate, mosquitto, gateway, dashboard, sync + herramientas `bootstrap` y `tools`), `dashboard/Dockerfile.dashboard`, `Dockerfile.gateway`, migración `0007_api_keys_sync.sql` (claves de API y cursores de sincronización).
+- Sincronización: `scripts/sync.ts` + `scripts/lib/sync-core.ts`; arranque inicial `scripts/sync-bootstrap.ts` (copia lo de Supabase a la Pi conservando tokens de nodos, usuarios y hashes de la bitácora). `sync` no sube nada hasta que se haga el arranque inicial.
+- API REST: `src/app/api/v1/**`, `src/lib/api/v1.ts`, `src/lib/auth/api-key.ts`, script `npm run api:key`. Documentada en `docs/api-v1.md`. Las claves actúan con el rol y alcance de un usuario.
+- Eliminado: `firmware/nodo_pico_w/`, `firmware/nodo_pi5/` y `dashboard/scripts/gateway.service`. Se conserva el resto del firmware ("por ahora").
+- Pruebas: unitarias de la pasarela reescritas; `tests/db/sync.test.ts` (10 pruebas con una segunda base temporal como «Supabase»). Las ~85 pruebas de BD pasan (84 + 1 sensible a los datos sembrados) en un PostgreSQL 17 común, no solo en Supabase.
+- Guía: `docs/gateway-raspberry.md`. Pendiente conocido: hora de la Pi sin internet (pila del RTC o chrony).
+- **Ronda de pruebas previa a la entrega (13 oct, noche):** resultados completos en `docs/pruebas.md`. Hallazgo importante: la cadena de hashes de la bitácora se bifurcaba con escrituras concurrentes (defecto de la 0001); corregido con la migración `0008_audit_chain_concurrency.sql` y la prueba `tests/db/audit-chain.test.ts`. Supabase NO tiene la 0008 (no la necesita para la copia). Nuevos: `dashboard/scripts/e2e.ts` (63 comprobaciones de la interfaz), `SYNC_DRY_RUN=1`, `scripts/{deploy-pi,demo-pc,prueba-hardware}.ps1`, `docs/entrega.md` (runbook, guion de demo, plan B). Totales: 190 unitarias, 105 de BD, 70 de firmware.
+

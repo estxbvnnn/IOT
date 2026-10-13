@@ -30,6 +30,13 @@ async function main(): Promise<void> {
     const [who] = await sql<{ user: string; version: string }[]>`select current_user as user, split_part(version(), ' ', 2) as version`
     console.log(`Conectado como ${who!.user} · PostgreSQL ${who!.version}`)
 
+    // Supabase ya trae estos roles y el esquema «extensions»; en un PostgreSQL común (la base local de la Raspberry Pi) las
+    // migraciones los necesitan (revoke … from anon, authenticated; pgcrypto en «extensions»), así que se crean si faltan.
+    await sql.unsafe(`do $$ begin
+      if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
+      if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+    end $$`)
+    await sql`create schema if not exists extensions`
     await sql`create schema if not exists iot`
     await sql`create table if not exists iot.schema_migrations (
                 name text primary key, applied_at timestamptz not null default now())`
