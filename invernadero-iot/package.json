@@ -2,7 +2,7 @@
   "name": "invernadero-iot",
   "version": "1.0.0",
   "private": true,
-  "description": "Invernadero IoT: firmware ESP32 + dashboard TypeScript + Supabase. Los scripts de esta carpeta delegan en dashboard/.",
+  "description": "Invernadero IoT: malla ESP-NOW de nodos + pasarela + dashboard TypeScript + PostgreSQL/Supabase. Los scripts de esta carpeta delegan en dashboard/.",
   "engines": {
     "node": ">=22.12"
   },
@@ -22,8 +22,6 @@
     "db:migrate": "npm --prefix dashboard run db:migrate",
     "db:seed": "npm --prefix dashboard run db:seed --",
     "db:retention": "npm --prefix dashboard run db:retention --",
-    "db:reset-data": "npm --prefix dashboard run db:reset-data --",
-    "firmware:unico": "node firmware/tools/generar_archivo_unico.mjs",
-    "firmware:unico:check": "node firmware/tools/generar_archivo_unico.mjs --check"
+    "db:reset-data": "npm --prefix dashboard run db:reset-data --"
   }
 }

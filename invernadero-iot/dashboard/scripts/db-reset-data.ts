@@ -32,7 +32,8 @@ async function main(): Promise<void> {
       await tx`
         update iot.node_state set ts = null, fw_version = null, boot_id = null, last_seq = null, uptime_s = null, temp_c = null,
                hum_air = null, soil_raw = null, soil_pct = null, light_lux = null, wind_ms = null, pump_on = null,
-               pump_state = null, pump_run_s = null, cooldown_s = null, rssi = null, snr = null, faults = '{}', cfg_version = null`
+               pump_state = null, pump_run_s = null, cooldown_s = null, rssi = null, snr = null, faults = '{}', cfg_version = null,
+               via = null, hops = null, transport = null, raw = null`
       await audit(tx as unknown as Db, { actorLabel: 'sistema', action: 'system.seed', detail: { reset: true, ...out } })
       return out
     })

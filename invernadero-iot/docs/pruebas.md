@@ -79,5 +79,4 @@ npm run typecheck && npm test                         # A
 docker compose up -d postgres                         # con el puerto publicado (127.0.0.1:55432) y DATABASE_* / DATABASE_ADMIN_* exportadas
 npm run test:db                                       # A/B/C: BD, bitácora concurrente, claves de API, sincronización
 npm run e2e -- --url http://127.0.0.1:3000 --users cuentas.json     # B: interfaz
-cd ../firmware/test && ARDUINOJSON_DIR=…/ArduinoJson/src ./ejecutar_pruebas.sh   # lógica del nodo (g++; o en un contenedor gcc)
 ```

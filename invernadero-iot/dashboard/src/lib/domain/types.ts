@@ -220,4 +220,8 @@ export interface DeviceDTO {
   /** Porcentaje de tramas recibidas frente a las esperadas en 24 h. */
   linkPct: number | null
   rssiSpark: (number | null)[]
+  /** Cómo llegó la última trama: directa (http/mqtt) o reenviada por otro nodo de la malla ESP-NOW. null = aún no ha reportado. */
+  route: { transport: 'mqtt' | 'http' | 'espnow'; via: string | null; hops: number | null } | null
+  /** Último JSON recibido tal cual (para ver qué campos manda un nodo que no es de este proyecto). */
+  lastJson: Record<string, unknown> | null
 }

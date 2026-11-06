@@ -1,0 +1,14 @@
+# Claves PRIVADAS (p. ej. la RSA de la Pi para el cifrado MQTT): nunca van al repositorio
+secrets/
+*.key
+# Respaldos del .env y capturas de red (el .pcap en claro trae el token del nodo)
+.env.bak*
+*.pcap
+*.pcapng
+# Variables del PC de pruebas (claves aleatorias propias)
+.env.pc
+# Configuracion local de las placas (WiFi e IP): nunca al repositorio
+firmware/malla_espnow/config_local.h
+# Credenciales del PC/Pi
+.env
+.env.local

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Archive, PowerOff, TriangleAlert, Wifi, WifiOff } from 'lucide-react'
+import { Archive, PowerOff, Radio, TriangleAlert, Wifi, WifiOff } from 'lucide-react'
 import { Chip } from '@/components/ui/status'
 import { Sparkline } from '@/components/ui/sparkline'
 import type { DeviceDTO } from '@/lib/domain/types'
@@ -21,16 +21,44 @@ const FAULT_LABEL: Record<string, string> = {
   viento_rango: 'Viento fuera de rango',
 }
 
+const TRANSPORT_LABEL = { mqtt: 'Directo · MQTT', http: 'Directo · HTTP', espnow: 'Malla ESP-NOW' } as const
+
+/** Cómo llegó la última trama: directa o reenviada por otro nodo, y el JSON tal cual para ver qué campos manda. */
+function RouteCell({ d }: { d: DeviceDTO }) {
+  if (!d.route) return <span className="text-ink-3">—</span>
+  const relayed = d.route.transport === 'espnow' && d.route.via
+  return (
+    <div className="leading-tight">
+      {relayed ? (
+        <Chip tone="info" icon={Radio} title="Otro nodo con red subió esta trama en nombre del origen">
+          Vía {d.route.via}{d.route.hops !== null ? ` · ${d.route.hops} ${d.route.hops === 1 ? 'salto' : 'saltos'}` : ''}
+        </Chip>
+      ) : (
+        <Chip tone="good" icon={Wifi}>{TRANSPORT_LABEL[d.route.transport]}</Chip>
+      )}
+      {d.lastJson && (
+        <details className="mt-1.5 text-[12px] text-ink-3">
+          <summary className="cursor-pointer select-none">Último JSON</summary>
+          <pre className="mt-1 max-h-48 max-w-[320px] overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--grid)] p-2 font-mono text-[11px] text-ink-2">
+            {JSON.stringify(d.lastJson, null, 1)}
+          </pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
 /** Tabla de nodos: estado de enlace y ciclo de vida de la credencial. Solo lectura salvo que `canManage`. */
 export function DevicesTable({ devices, canManage }: { devices: DeviceDTO[]; canManage: boolean }) {
   return (
     <div className="overflow-x-auto">
-      <table className="tbl min-w-[1180px]">
+      <table className="tbl min-w-[1300px]">
         <thead>
           <tr>
             <th scope="col">Nodo</th>
             <th scope="col">Estado</th>
             <th scope="col">Firmware</th>
+            <th scope="col">Ruta</th>
             <th scope="col">Última trama</th>
             <th scope="col">Enlace (RSSI · SNR · 6 h)</th>
             <th scope="col">Tramas 24 h</th>
@@ -70,6 +98,7 @@ export function DevicesTable({ devices, canManage }: { devices: DeviceDTO[]; can
                   )}
                 </td>
                 <td className="whitespace-nowrap font-mono text-[12.5px] text-ink-2">{d.fw ?? '—'}</td>
+                <td><RouteCell d={d} /></td>
                 <td className="whitespace-nowrap">
                   <div className="text-ink">{fmtAgo(d.ageS)}</div>
                   <div className="text-[12px] text-ink-3">{d.lastSeen ? fmtDateTime(d.lastSeen) : 'nunca'}</div>

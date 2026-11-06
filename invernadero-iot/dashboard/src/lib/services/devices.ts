@@ -20,9 +20,11 @@ export async function listDevices(db: Db, actor: Actor, now = new Date()): Promi
       id: number; kind: 'greenhouse' | 'mast'; label: string; code: string | null; gh_archived: boolean; enabled: boolean
       token_prefix: string; token_rotated_at: Date; fw_version: string | null; ts: Date | null; rssi: number | null
       snr: number | null; uptime_s: number | null; faults: string[] | null; interval_s: number | null
+      transport: 'mqtt' | 'http' | 'espnow' | null; via: string | null; hops: number | null; raw: Record<string, unknown> | null
     }[]>`
       select n.id, n.kind, n.label, g.code, (g.archived_at is not null) as gh_archived, n.enabled, n.token_prefix,
-             n.token_rotated_at, s.fw_version, s.ts, s.rssi, s.snr, s.uptime_s, s.faults, t.interval_s
+             n.token_rotated_at, s.fw_version, s.ts, s.rssi, s.snr, s.uptime_s, s.faults, t.interval_s,
+             s.transport, s.via, s.hops, s.raw
         from iot.nodes n
         left join iot.greenhouses g on g.id = n.greenhouse_id
         left join iot.node_state s on s.node_id = n.id
@@ -56,6 +58,8 @@ export async function listDevices(db: Db, actor: Actor, now = new Date()): Promi
       rssi: n.rssi, snr: n.snr, uptimeS: n.uptime_s, faults: n.faults ?? [], intervalS, frames24h, expected24h,
       linkPct: n.ts ? Math.min(100, Math.round((frames24h / expected24h) * 100)) : null,
       rssiSpark: Array.from({ length: 24 }, (_, i) => buckets?.get(firstBucket + i * bucketMs) ?? null),
+      route: n.transport ? { transport: n.transport, via: n.via, hops: n.hops } : null,
+      lastJson: n.raw,
     }
   })
 }

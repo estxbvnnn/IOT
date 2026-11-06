@@ -37,18 +37,24 @@ export type Ack = z.infer<typeof ackSchema>
 
 export const PUMP_STATES = ['idle', 'riego', 'espera', 'bloq_temp', 'bloq_sensor', 'saturado'] as const
 
+/**
+ * Esquema TOLERANTE: solo `seq` es obligatorio (sin él no se puede descartar un duplicado). Lo que falta toma un valor por
+ * defecto (sensores faltantes = null; `bomba` ausente = «sin dato» y no toca el registro de riegos). Los valores presentes
+ * pero inválidos (temp como texto, bomba: 2, v distinta de 1, seq 0…) siguen rechazándose con 400. Los nombres alternativos,
+ * los campos desconocidos y las listas con elementos inválidos se tratan antes, en normalize.ts (`parseFrame`).
+ */
 export const frameSchema = z.object({
-  v: z.literal(1),
-  fw: z.string().min(1).max(16),
-  boot: uint32,
+  v: z.literal(1).optional(),
+  fw: z.string().min(1).max(16).default('desconocido'),
+  boot: uint32.default(0),
   seq: uint32.min(1),
-  up: uint32,
-  temp: nullableNumber,
-  hum_aire: nullableNumber,
-  suelo_raw: z.number().finite().nullable(),
+  up: uint32.default(0),
+  temp: nullableNumber.default(null),
+  hum_aire: nullableNumber.default(null),
+  suelo_raw: z.number().finite().nullable().default(null),
   luz: nullableNumber.optional(),
   viento: nullableNumber.optional(),
-  bomba: z.union([z.literal(0), z.literal(1)]),
+  bomba: z.union([z.literal(0), z.literal(1)]).optional(),
   riego_s: z.number().int().min(0).max(86_400).optional(),
   est: z.enum(PUMP_STATES).optional(),
   esp: z.number().int().min(0).max(86_400).optional(),

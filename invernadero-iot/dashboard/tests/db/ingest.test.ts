@@ -311,3 +311,46 @@ describe('POST /api/ingest · alertas', () => {
     })
   })
 })
+
+describe('POST /api/ingest · JSON de otros nodos y ruta de la malla ESP-NOW', () => {
+  it('una trama con solo seq y nombres ajenos se guarda; lo desconocido va a extra y la ruta queda registrada', async () => {
+    await inRollback(async (tx) => {
+      const token = await tokenFor(tx, GH)
+      const r = await send(tx, token, { sequence: 1, temperature: 22.5, humidity: 61, ph: 6.5 }, T0, {
+        route: { transport: 'espnow', via: 'nodo-bbbbbb', hops: 1 },
+      })
+      expect(r.status).toBe(200)
+      const [rd] = await tx<{ temp_c: number; hum_air: number; via: string; hops: number; transport: string; extra: { ph: number } }[]>`
+        select r.temp_c, r.hum_air, r.via, r.hops, r.transport, r.extra from iot.readings r join iot.nodes n on n.id = r.node_id
+         where n.greenhouse_id = ${GH} order by r.id desc limit 1`
+      expect(rd).toMatchObject({ temp_c: 22.5, hum_air: 61, via: 'nodo-bbbbbb', hops: 1, transport: 'espnow', extra: { ph: 6.5 } })
+      const [st] = await tx<{ via: string; transport: string; raw: { sequence: number } }[]>`
+        select s.via, s.transport, s.raw from iot.node_state s join iot.nodes n on n.id = s.node_id where n.greenhouse_id = ${GH}`
+      expect(st).toMatchObject({ via: 'nodo-bbbbbb', transport: 'espnow', raw: { sequence: 1 } })
+    })
+  })
+
+  it('sin ruta indicada se asume HTTP directo', async () => {
+    await inRollback(async (tx) => {
+      const token = await tokenFor(tx, GH)
+      await send(tx, token, frameBuilder()(), T0)
+      const [st] = await tx<{ via: string | null; transport: string; hops: number | null }[]>`
+        select s.via, s.transport, s.hops from iot.node_state s join iot.nodes n on n.id = s.node_id where n.greenhouse_id = ${GH}`
+      expect(st).toEqual({ via: null, transport: 'http', hops: null })
+    })
+  })
+
+  it('una trama sin «bomba» no cierra un riego que estaba abierto', async () => {
+    await inRollback(async (tx) => {
+      const token = await tokenFor(tx, GH)
+      const f = frameBuilder()
+      await send(tx, token, f({ bomba: 1, est: 'riego', riego_s: 5 }), T0)
+      const abiertos = () => tx<{ n: number }[]>`
+        select count(*)::int as n from iot.irrigation_events e join iot.nodes n on n.id = e.node_id where n.greenhouse_id = ${GH} and e.ended_at is null`
+      expect((await abiertos())[0]!.n).toBe(1)
+      const { bomba: _b, est: _e, ...sinBomba } = f()
+      await send(tx, token, sinBomba, plus(T0, 5))
+      expect((await abiertos())[0]!.n).toBe(1)
+    })
+  })
+})

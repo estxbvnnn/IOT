@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { frameSchema, sanitizeFrame } from '@/lib/ingest/schema'
+import { parseFrame } from '@/lib/ingest/normalize'
 import { buildCfg, parseBearer } from '@/lib/services/ingest'
 
 const base = {
@@ -7,12 +8,14 @@ const base = {
 } as const
 
 describe('trama de telemetría (protocolo v1)', () => {
+  const ok = (x: unknown) => parseFrame(x).ok
+
   it('acepta una trama mínima válida', () => {
-    expect(frameSchema.safeParse(base).success).toBe(true)
+    expect(ok(base)).toBe(true)
   })
 
   it('acepta una trama completa con eventos y acuses', () => {
-    const r = frameSchema.safeParse({
+    const r = parseFrame({
       ...base, luz: 18234, viento: null, riego_s: 0, est: 'idle', esp: 0, rssi: -61, snr: null, fallas: [],
       ev: [
         { t: 'pump_on', why: 'auto', ago: 95 },
@@ -20,11 +23,12 @@ describe('trama de telemetría (protocolo v1)', () => {
       ],
       acks: [{ id: '0b6c1a52-7c1e-4f0e-9a0c-2f3e7a9d1c11', estado: 'ejecutada', detalle: 'regando 20 s' }],
     })
-    expect(r.success).toBe(true)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.frame.ev).toHaveLength(2)
   })
 
   it('acepta null en sensores caídos', () => {
-    expect(frameSchema.safeParse({ ...base, temp: null, hum_aire: null, suelo_raw: null }).success).toBe(true)
+    expect(ok({ ...base, temp: null, hum_aire: null, suelo_raw: null })).toBe(true)
   })
 
   it.each([
@@ -35,18 +39,75 @@ describe('trama de telemetría (protocolo v1)', () => {
     ['bomba no binaria', { bomba: 2 }],
     ['temperatura como texto', { temp: '24' }],
     ['NaN / Infinity no son JSON, pero un texto sí llega', { temp: 'NaN' }],
-    ['motivo de bomba inventado', { ev: [{ t: 'pump_off', why: 'porque_si', ago: 0 }] }],
-    ['acuse con id que no es uuid', { acks: [{ id: 'abc', estado: 'ejecutada' }] }],
-    ['demasiados eventos', { ev: Array.from({ length: 9 }, () => ({ t: 'pump_on', why: 'auto', ago: 0 })) }],
-    ['estado desconocido', { est: 'hackeado' }],
-    ['falla con texto enorme', { fallas: ['x'.repeat(100)] }],
   ])('rechaza: %s', (_n, patch) => {
-    expect(frameSchema.safeParse({ ...base, ...patch }).success).toBe(false)
+    expect(ok({ ...base, ...patch })).toBe(false)
   })
 
-  it('ignora campos desconocidos (compatibilidad hacia adelante)', () => {
-    const r = frameSchema.safeParse({ ...base, futuro: 'x' })
-    expect(r.success).toBe(true)
+  it('sin seq no hay forma de descartar duplicados: se rechaza', () => {
+    const { seq: _seq, ...sinSeq } = base
+    expect(ok(sinSeq)).toBe(false)
+    expect(ok('hola')).toBe(false)
+    expect(ok([1, 2])).toBe(false)
+  })
+})
+
+describe('JSON de otros nodos: campos que faltan, sobran o se llaman distinto', () => {
+  it('solo exige seq: lo que falta toma un valor por defecto', () => {
+    const r = parseFrame({ seq: 7 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.frame).toMatchObject({ seq: 7, fw: 'desconocido', boot: 0, up: 0, temp: null, hum_aire: null, suelo_raw: null })
+    expect(r.frame.bomba).toBeUndefined()
+    expect(r.extra).toBeNull()
+  })
+
+  it('entiende nombres alternativos y bomba booleana', () => {
+    const r = parseFrame({ sequence: 3, temperature: 22.5, humidity: 61, soil: 480, lux: 900, wind: 2, pump_on: true, uptime: 15, firmware: '1.2' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.frame).toMatchObject({ seq: 3, temp: 22.5, hum_aire: 61, suelo_raw: 480, luz: 900, viento: 2, bomba: 1, up: 15, fw: '1.2' })
+    expect(r.extra).toBeNull()
+  })
+
+  it('el nombre canónico gana sobre el alternativo', () => {
+    const r = parseFrame({ seq: 1, temp: 20, temperature: 99 })
+    expect(r.ok && r.frame.temp).toBe(20)
+  })
+
+  it('guarda en extra lo que no conoce (sin romper la trama)', () => {
+    const r = parseFrame({ ...base, ph: 6.5, tanque: { nivel: 80 } })
+    expect(r.ok && r.extra).toEqual({ ph: 6.5, tanque: { nivel: 80 } })
+  })
+
+  it('acota el tamaño de extra', () => {
+    const gran: Record<string, string> = {}
+    for (let i = 0; i < 50; i++) gran[`k${i}`] = 'x'.repeat(200)
+    const r = parseFrame({ ...base, ...gran })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(JSON.stringify(r.extra).length).toBeLessThanOrEqual(2000)
+  })
+
+  it('descarta, sin rechazar la trama, lo opcional mal formado', () => {
+    const r = parseFrame({
+      ...base, est: 'hackeado', rssi: 40, fallas: ['ok', 'x'.repeat(100), 7],
+      ev: [{ t: 'pump_off', why: 'porque_si', ago: 0 }, { t: 'pump_on', why: 'auto', ago: 1 }],
+      acks: [{ id: 'abc', estado: 'ejecutada' }],
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.frame.est).toBeUndefined()
+    expect(r.frame.rssi).toBeUndefined()
+    expect(r.frame.fallas).toEqual(['ok'])
+    expect(r.frame.ev).toEqual([{ t: 'pump_on', why: 'auto', ago: 1 }])
+    expect(r.frame.acks).toEqual([])
+  })
+
+  it('recorta fw largo y limita las listas a 8', () => {
+    const r = parseFrame({ ...base, fw: 'a-muy-largo-nombre-de-firmware', ev: Array.from({ length: 9 }, () => ({ t: 'pump_on', why: 'auto', ago: 0 })) })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.frame.fw).toHaveLength(16)
+    expect(r.frame.ev).toHaveLength(8)
   })
 })
 

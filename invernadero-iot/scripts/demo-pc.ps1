@@ -7,7 +7,7 @@
   No toca tus archivos .demo-* ni tu Supabase: usa una base local nueva y claves aleatorias que viven solo en %TEMP%\iot-demo.
   Usuario administrador de la demo:  demo-admin@invernadero.local  (la clave se muestra al terminar).
 #>
-param([switch]$Detener, [switch]$SinSimulador, [switch]$NoAbrir, [switch]$NodoReal)
+param([switch]$Detener, [switch]$SinSimulador, [switch]$NoAbrir)
 # Los programas externos (arduino-cli, docker) escriben avisos por stderr: con 'Stop' PowerShell 5.1 los trata como error. Se revisa $LASTEXITCODE donde importa.
 $ErrorActionPreference = 'Continue'
 $proyecto = Split-Path -Parent $PSScriptRoot
@@ -95,14 +95,6 @@ try {
   $sql = ''
   foreach ($g in 1..10) { $t = Token43; $tokens["I$g"] = $t; $sql += "update iot.nodes set token_hash = sha256(convert_to('$t','UTF8')), token_prefix = left('$t',6) where greenhouse_id = $g; " }
   $t = Token43; $tokens['MAST'] = $t; $sql += "update iot.nodes set token_hash = sha256(convert_to('$t','UTF8')), token_prefix = left('$t',6) where kind = 'mast'; "
-  if ($NodoReal) {
-    $ino = Get-Content (Join-Path $proyecto 'firmware\nododefinitivo\nododefinitivo.ino') -Raw
-    if ($ino -notmatch '#define\s+DEVICE_TOKEN\s+"([A-Za-z0-9_-]{20,64})"') { throw 'No encontré un DEVICE_TOKEN válido en el sketch.' }
-    $tokenReal = $Matches[1]
-    Write-Host '== Registrando el token de la NodeMCU real como nodo de I1 (reporte cada 5 s)...' -ForegroundColor Cyan
-    $tokens.Remove('I1')
-    $sql += "update iot.nodes set token_hash = sha256(convert_to('$tokenReal','UTF8')), token_prefix = left('$tokenReal',6) where greenhouse_id = 1; update iot.thresholds set interval_s = 5 where greenhouse_id = 1; "
-  }
   $sql | & docker @dc exec -T postgres psql -U postgres -d iot -q
   if ($LASTEXITCODE -ne 0) { throw 'No se pudieron asignar los tokens de los nodos de la demo.' }
   # Administrador de la demo con clave conocida
@@ -124,10 +116,9 @@ main().catch((e) => { console.error(e.message); process.exit(1) })
 
   if (-not $SinSimulador) {
     Write-Host '== Arrancando el simulador de nodos (ventana aparte)...' -ForegroundColor Cyan
-    # El simulador usa los tokens que se acaban de asignar a la base de la demo (con -NodoReal, I1 queda para la placa real).
+    # El simulador usa los tokens que se acaban de asignar a la base de la demo.
     $add = ($tokens.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ','
     $soloOtros = ''; $fast = ' --fast'   # --fast fija el reporte de los nodos en 15 s mientras corre el simulador
-    if ($NodoReal) { $soloOtros = ' --only I2,I3,I4,I5,I6,I7,I8,I9,I10,MAST'; $fast = '' }   # con la placa real se respeta su reporte de 5 s
     $cmd = "Set-Location '$dash'; `$env:DATABASE_HOST='127.0.0.1'; `$env:DATABASE_PORT='55432'; `$env:DATABASE_NAME='iot'; `$env:DATABASE_SSL_MODE='disable'; `$env:DATABASE_USER='iot_app'; `$env:DATABASE_PASSWORD='$($cfg['IOT_APP_PASSWORD'])'; npx tsx scripts/simulate.ts --url http://127.0.0.1:3000 --scenario demo$fast --add '$add'$soloOtros"
     Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmd
   }

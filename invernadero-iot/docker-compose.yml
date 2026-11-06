@@ -109,8 +109,14 @@ services:
       MQTT_URL: mqtt://mosquitto:1883
       MQTT_USER: ${MQTT_USER}
       MQTT_PASS: ${MQTT_PASS}
+      MQTT_AES_KEY: ${MQTT_AES_KEY:-}            # clave AES compartida con los nodos (32 hex = AES-128, 64 hex = AES-256); vacía = sin AES (docs/cifrado-mqtt.md)
+      MQTT_CIFRADO: ${MQTT_CIFRADO:-permitir}    # permitir = todo · exigir = solo aes o rsa · exigir-rsa = solo rsa (clave pública/privada)
+      MQTT_RSA_PRIVATE_KEY_FILE: /run/secrets/mqtt-rsa-private.pem   # clave PRIVADA de la Pi (modo rsa); si el archivo no existe, no hay rsa
+      ACEPTAR_NODOS_NUEVOS: ${ACEPTAR_NODOS_NUEVOS:-0}   # PRUEBAS: 1 = acepta cualquier identificador («GRUPO-A») y da de alta los nodos nuevos solos (docs/malla-espnow.md). NO en produccion
       GATEWAY_PORT: "3100"
       TZ: ${TZ:-America/Santiago}
+    volumes:
+      - ./secrets:/run/secrets:ro      # carpeta con mqtt-rsa-private.pem (solo en la Pi; fuera de git). Ver docs/cifrado-mqtt.md
     ports:
       - "3100:3100"                    # solo para nodos que usen HTTP en vez de MQTT, y /api/health
     depends_on:

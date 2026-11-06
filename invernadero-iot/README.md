@@ -1,8 +1,9 @@
 # Invernadero IoT · monitoreo y riego automático de invernaderos
 
 Implementación funcional del informe **«Diseño de una solución IoT para el monitoreo y riego automático de invernaderos»**
-(INACAP · Seguridad IoT · alternativa 2, bajo costo). Incluye el **firmware del nodo ESP32**, una **base de datos en Supabase**
-y un **dashboard web en TypeScript** con control de acceso por rol.
+(INACAP · Seguridad IoT · alternativa 2, bajo costo). Incluye el **firmware de la malla ESP-NOW** (un solo `.ino` para todas las placas),
+la **pasarela** (Raspberry Pi, o el PC mientras tanto), una **base de datos** (PostgreSQL local con copia a Supabase) y un **dashboard web en
+TypeScript** con control de acceso por rol.
 
 ## Capturas
 
@@ -16,18 +17,65 @@ y un **dashboard web en TypeScript** con control de acceso por rol.
 
 <sub>Capturas de referencia tomadas durante el desarrollo, con datos **simulados**; la interfaz puede diferir en detalles menores.</sub>
 
+## Estado actual (6 de noviembre de 2026)
+
+**Objetivo:** que todas las placas ejecuten el mismo `.ino` y formen una **malla**. Si un nodo no consigue que el servidor le responda, otro nodo sube sus datos por ESP-NOW. Solo la Raspberry Pi (por ahora, el PC) sube a la nube.
+
+```
+nodo sin red ──ESP-NOW──► vecino CON red ──POST /relay/<id>──► pasarela (PC/Pi) ──► PostgreSQL ──(sync cada 5 min)──► Supabase
+      ▲                                                                │
+      └────────── respuesta cifrada (vuelve por radio) ◄───────────────┘
+```
+
+### Qué se hizo
+- **Firmware único** `firmware/malla_espnow/malla_espnow.ino` (NodeMCU/ESP8266): cifrado RSA-2048 + AES-256-GCM de extremo a extremo, reenvío por inundación con TTL 3 y detección de duplicados. Los nodos intermedios **no abren** el contenido. Selector `PERFIL` (0 = todas las placas; 1 y 2 = pruebas con dos placas). El WiFi y la IP van en `config_local.h` (fuera de git; plantilla en `config_local.example.h`).
+- **Detección del canal:** una placa que no consigue conectar al WiFi busca el router por su nombre y usa **su canal**, para seguir oyendo a los vecinos. Reintenta la conexión cada 30 s.
+- **Pasarela:** `POST /relay/<id>` (mismo pipeline que MQTT), con las cabeceras `X-Via` y `X-Saltos`. Cada lectura guarda su ruta (`transport`, `via`, `hops`) — migración `0009_origen_ruta.sql`.
+- **Ingesta tolerante:** acepta JSON con campos faltantes o extra (solo `seq` es obligatorio), entiende alias (`temperature`, `humidity`, `soil`…) y guarda lo desconocido en `extra`.
+- **Modo abierto de pruebas** (`ACEPTAR_NODOS_NUEVOS=1`): sin tokens, cada identificador nuevo se da de alta solo y se coloca en un hueco libre del mapa (ya no se superponen).
+- **Dashboard:** la tabla de *Equipos* muestra la ruta («Directo · HTTP» o «Vía nodo-xxxx · N salto(s)») y el último JSON recibido.
+- **El PC hace de Pi** con Docker (`docker-compose.yml`, `.env.pc`) y `scripts/firewall-pasarela-pc.ps1` (abre y **cierra** los puertos 3100 y 3000).
+- **Limpieza:** se eliminó el firmware anterior (`nodo_invernadero*`, `test/`, `tools/`). El material de clase y las prácticas viven en `material-clase/` (fuera del proyecto y de git).
+
+### Placas de prueba y MAC
+| Placa | MAC | Nombre en el sistema | Notas |
+|---|---|---|---|
+| Placa 1 (puerto COM6 en las pruebas) | `A4:CF:12:FE:F2:CC` | `nodo-fef2cc` | La que conecta de forma más fiable al WiFi |
+| Placa 2 (puerto COM4 en las pruebas) | `FC:F5:C4:8D:57:2E` | `nodo-8d572e` | Tuvo fallos al conectar al arrancar; se usa como la placa «sin red» |
+| Placa del compañero (práctica `espnow_cifrado`, en `material-clase/`) | `78:1C:3C:85:BB:C8` | — | Solo para la práctica entre grupos |
+
+La malla (`malla_espnow`) **no usa MAC**: difunde a todos. Solo la práctica `espnow_cifrado` y el firmware anterior usaban `SOCIO_MAC`. En los dispositivos de prueba, el identificador de cada placa sale de su chip (`nodo-<últimos 6 hex de la MAC>`).
+
+### Cómo probar la malla con dos placas
+1. En `invernadero-iot`: `docker compose --env-file .env --env-file .env.pc up -d postgres migrate gateway dashboard` y abre el puerto con `.\scripts\firewall-pasarela-pc.ps1 -Abrir` (como administrador).
+2. Copia `firmware/malla_espnow/config_local.example.h` a `config_local.h` y pon tu WiFi (2,4 GHz) y la IP del PC.
+3. Sube el mismo archivo a las dos placas con `PERFIL 0`.
+4. En el celular (punto de acceso), **bloquea la MAC de una placa**: pasa a radio y la otra sube sus datos. Verás «Vía nodo-xxxx · 1 salto» en *Equipos*. Desbloquéala para ver que vuelve a «Directo».
+
+Guía completa y cómo revertirlo todo: [`docs/malla-espnow.md`](docs/malla-espnow.md) y [`PRUEBAS_TEMPORALES.md`](PRUEBAS_TEMPORALES.md).
+
+### Qué falta
+- **La malla aún no es estable.** Con dos placas reales una lectura cruzó por radio con 1 salto, pero después las lecturas de la placa bloqueada dejaron de llegar. Falta ver el Monitor Serie de la placa que sube para saber si no oye los fragmentos, no los sube o falla la respuesta.
+- **Salida serie corrupta:** durante la transmisión por radio el Monitor Serie se llena de caracteres repetidos. Parece cable/alimentación USB, sin confirmar; hay que probar otro cable o un puerto con buena alimentación.
+- **Más de un salto** no está probado: se necesita una tercera placa.
+- **Sensores reales:** el firmware de la malla envía datos **simulados** (`armarJson`). Falta integrar DHT22, YL-38 y la bomba (el firmware anterior con sensores está en el historial de git y en `material-clase/`).
+- **Raspberry Pi real:** todo se probó con el PC como pasarela. Falta desplegar en la Pi (`scripts/deploy-pi.ps1`), usar el modo normal con tokens (`ACEPTAR_NODOS_NUEVOS=0`) y revisar el firewall.
+- **Migración `0009` en Supabase:** está aplicada solo en la base local. Si no se aplica en Supabase, el servicio `sync` omite `readings`.
+- **Pruebas de base de datos:** los tests nuevos de `tests/db` (ruta, ingesta tolerante, alta abierta) no se han ejecutado contra PostgreSQL. Los 227 tests unitarios pasan.
+- **Seguridad antes de producción:** `POST /relay` no pide autenticación HTTP y el modo abierto acepta cualquier identificador (tope de 60 invernaderos). Hay que cerrarlos antes de entregar (ver `PRUEBAS_TEMPORALES.md`).
+- **Datos de prueba:** quedan invernaderos de pruebas anteriores (`GRUPO-A`, `GRUPO-B`) sin datos; se pueden borrar.
+- **Reporte de los nodos:** las placas de prueba envían cada 10 s, pero el dashboard espera 300 s por defecto, así que «Tramas 24 h» muestra porcentajes engañosos.
+
 ## Qué incluye
 
 | Carpeta | Qué es |
 |---|---|
-| `firmware/nodo_invernadero_unico/` | **El firmware para ESP8266 (NodeMCU, D1 mini) en UN solo archivo `.ino`**, para Arduino IDE y sin depender de otros archivos: DHT22 + YL-38 + bomba por relé, lógica de riego autónoma y cliente HTTP. Es el que se carga en la placa. |
-| `firmware/nododefinitivo/` | **El firmware del nodo en uso**: NodeMCU (ESP8266) con DHT22 + YL-38 + bomba por relé, riego autónomo y envío por **MQTT** a la Raspberry Pi (o HTTP). Es el que se carga en la placa. |
-| `docker-compose.yml`, `docker/` | **La Raspberry Pi** como sistema completo en la red local: Mosquitto + pasarela + PostgreSQL + dashboard + API y copia a Supabase. Guía: [`docs/gateway-raspberry.md`](docs/gateway-raspberry.md). |
-| `firmware/nodo_invernadero_unico_esp32/` | El mismo firmware de un solo archivo para **ESP32** (DevKit V1 o Heltec V2). |
-| `firmware/nodo_invernadero/` | La versión modular de ESP32 (la fuente de la lógica compartida, con pruebas de host). Guía completa en [`docs/hardware.md`](docs/hardware.md). |
+| `firmware/malla_espnow/` | **El firmware de TODAS las placas (NodeMCU/ESP8266), un solo `.ino`**: cifra cada medición (RSA-2048 + AES-GCM), la sube por WiFi a la pasarela o, si no hay red, la difunde por **ESP-NOW** para que la suba un vecino (malla con hasta 3 saltos). Guía: [`docs/malla-espnow.md`](docs/malla-espnow.md). Los sensores del sketch son simulados (`armarJson`). |
+| `docker-compose.yml`, `docker/` | **La Raspberry Pi** (o el PC) como sistema completo en la red local: Mosquitto + pasarela + PostgreSQL + dashboard + API y copia a Supabase. Guía: [`docs/gateway-raspberry.md`](docs/gateway-raspberry.md). |
 | `dashboard/` | Aplicación web **Next.js 16 + React 19 + TypeScript estricto**: API de recepción de los nodos, paneles por rol, gráficos, alertas, órdenes de riego, bitácora. |
 | `supabase/migrations/` | Esquema SQL (PostgreSQL 17): tablas, permisos mínimos, bitácora inmutable. |
-| `docs/` | [`gateway-raspberry.md`](docs/gateway-raspberry.md) (la Pi), [`api-v1.md`](docs/api-v1.md) (API REST del dashboard), [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`hardware.md`](docs/hardware.md), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
+| `docs/` | [`gateway-raspberry.md`](docs/gateway-raspberry.md) (la Pi), [`api-v1.md`](docs/api-v1.md) (API REST del dashboard), [`contrato-api.md`](docs/contrato-api.md) (protocolo nodo ↔ servidor), [`malla-espnow.md`](docs/malla-espnow.md) (la malla), [`seguridad.md`](docs/seguridad.md) (controles del informe → código). |
+| `scripts/` | `firewall-pasarela-pc.ps1` (abre/**cierra** los puertos 3100 y 3000 para probar con el PC), `deploy-pi.ps1`, `demo-pc.ps1`. |
 
 **¿Por qué TypeScript?** Es el lenguaje con mejor relación entre productividad, seguridad de tipos y ecosistema para un panel web:
 los mismos tipos viajan del acceso a datos a la interfaz, y el compilador (modo `strict`) detecta errores antes de ejecutar. El
@@ -73,10 +121,9 @@ levanta el servidor de desarrollo; la versión de producción es `npm run build`
   `--add I11=<token>` para simular un invernadero creado desde el panel.
   `npm run demo` usa `--fast`: fija «Reporte del nodo» en 15 s para ver alertas en minutos y lo **restaura a 300 s al salir con Ctrl+C**
   (si cierras la terminal a la fuerza, vuelve a dejarlo en 300 s desde el panel de umbrales de cada invernadero).
-* **Con una placa real (Arduino IDE)**: `npm run dev:lan`, abre `firmware/nodo_invernadero_unico/nodo_invernadero_unico.ino` (ESP8266; para ESP32,
-  `nodo_invernadero_unico_esp32`) y completa su bloque
-  «CONFIGURACION DEL USUARIO»: WiFi, la URL `http://<IP-de-tu-PC>:3000` y el token del nodo. El token de un invernadero **nuevo** se muestra una
-  sola vez al crearlo en *Invernaderos → Nuevo invernadero*; los de ejemplo están en `dashboard/.demo-devices.json` (ver [`docs/hardware.md`](docs/hardware.md)).
+* **Con placas reales (Arduino IDE)**: levanta la pasarela en el PC (`docker compose --env-file .env --env-file .env.pc up -d postgres migrate gateway dashboard`),
+  abre `firmware/malla_espnow/malla_espnow.ino`, completa `WIFI_SSID`, `WIFI_PASS` y `GATEWAY_HOST` (IP del PC) y sube **el mismo archivo a todas las placas**.
+  Paso a paso, pruebas y cómo revertirlo todo: [`docs/malla-espnow.md`](docs/malla-espnow.md).
 
 Hasta que un nodo reporte por primera vez, el panel muestra «Sin datos»; si un nodo deja de reportar, pasa a «Sin conexión» a los 15 min.
 **El simulador escribe en la MISMA base que los nodos reales**: no lo uses junto con ESP32 reales. Si lo usaste, limpia con
@@ -137,7 +184,6 @@ npm run test:db     # 103 pruebas de integración contra PostgreSQL (cada una se
                     # claves de API y la sincronización con Supabase (segunda base temporal). Funcionan en cualquier PostgreSQL 17, no solo Supabase:
                     #   docker compose up -d postgres  (con el puerto publicado en 127.0.0.1) y las variables DATABASE_* / DATABASE_ADMIN_*
 npm run e2e -- --url http://127.0.0.1:3000 --users cuentas.json   # interfaz web en Edge/Chrome: cada rol, riego en 2 pasos, CSV, bitácora (63 comprobaciones)
-cd ../firmware/test && ./ejecutar_pruebas.sh     # 70 pruebas de la lógica del nodo compilada en el PC (ver firmware/README.md)
 ```
 Resultados completos de la última ronda (incluye caídas de servicios, seguridad, arm64 y prueba con 10 nodos a la vez): [`docs/pruebas.md`](docs/pruebas.md).
 

@@ -2,12 +2,14 @@ import type { Db } from '../db/types'
 import { inTransaction } from '../db/types'
 import { hashToken } from '../auth/tokens'
 import { soilPct } from '../domain/soil'
-import { FRAME_MAX_BYTES, type Frame, type PumpEvent, frameSchema, sanitizeFrame } from '../ingest/schema'
+import { FRAME_MAX_BYTES, type Frame, type PumpEvent, sanitizeFrame } from '../ingest/schema'
+import { parseFrame } from '../ingest/normalize'
 import {
   type AlertThresholds, type EvalOutput, type RecentReading,
   evaluateGreenhouse, evaluatePumpAnomaly, evaluateWind,
 } from '../alerts/engine'
 import { applyAlerts, sweepOfflineNodes } from './alerts'
+import { registerOpenNode } from './open-nodes'
 import { audit } from './audit'
 import { deliveryWindowS } from './commands'
 import { isScheduleDue, localParts } from './schedules'
@@ -28,6 +30,13 @@ import { isScheduleDue, localParts } from './schedules'
 export const MIN_FRAME_SPACING_MS = 1000
 const MAST_INTERVAL_S = 60
 
+/** Por dónde llegó la trama a la pasarela (se guarda en cada lectura). `via` = nodo de la malla que la subió por el origen. */
+export interface RouteInfo {
+  transport: 'mqtt' | 'http' | 'espnow'
+  via?: string | null
+  hops?: number | null
+}
+
 export interface IngestInput {
   authorization: string | null
   rawBody: string
@@ -35,6 +44,13 @@ export interface IngestInput {
   now?: Date
   /** Solo pruebas: evita el barrido asíncrono de nodos caídos (no determinista). */
   skipSweep?: boolean
+  /** Ruta de llegada; sin ella se asume HTTP directo. */
+  route?: RouteInfo
+  /**
+   * MODO DE PRUEBAS (solo la pasarela, con ACEPTAR_NODOS_NUEVOS=1): la credencial puede ser un identificador cualquiera
+   * («GRUPO-A») y un identificador desconocido que mande una trama válida se da de alta solo, con su propio invernadero.
+   */
+  abierto?: boolean
 }
 
 export interface IngestOrder { id: string; tipo: 'riego' | 'parar'; dur_s?: number; vence_s: number }
@@ -86,9 +102,13 @@ interface NodeRow {
   version: number | null
 }
 
-export function parseBearer(header: string | null): string | null {
+/**
+ * Extrae la credencial de «Bearer <x>». Normal: token aleatorio de 20 a 128 caracteres. Con `abierto` (modo de pruebas
+ * ACEPTAR_NODOS_NUEVOS): cualquier identificador corto como «GRUPO-A» o «nodo-a1b2c3» (1 a 128 caracteres).
+ */
+export function parseBearer(header: string | null, abierto = false): string | null {
   if (!header) return null
-  const m = /^Bearer\s+([A-Za-z0-9_-]{20,128})$/.exec(header.trim())
+  const m = (abierto ? /^Bearer\s+([A-Za-z0-9_-]{1,128})$/ : /^Bearer\s+([A-Za-z0-9_-]{20,128})$/).exec(header.trim())
   return m ? m[1]! : null
 }
 
@@ -108,6 +128,7 @@ async function noteAuthFailure(db: Db, ip: string | null, reason: string, now: D
 }
 
 const num = (v: number | null | undefined): number | null => (v === undefined ? null : v)
+const jsonb = (tx: Db, value: unknown) => tx.json(value as Parameters<Db['json']>[0])
 
 export function buildCfg(n: Pick<NodeRow, 'kind' | 'soil_on' | 'soil_off' | 'soil_sat' | 'temp_max' | 'pump_max_s' | 'pump_wait_s' | 'auto_enabled' | 'interval_s' | 'version'>): IngestCfg {
   if (n.kind === 'mast' || n.soil_on === null) return { ver: 1, intervalo_s: MAST_INTERVAL_S }
@@ -133,14 +154,7 @@ interface ActiveCommand {
   expires_at: Date | null
 }
 
-export async function handleIngest(db: Db, input: IngestInput): Promise<IngestResult> {
-  const now = input.now ?? new Date()
-
-  // 1) Autenticación por token del nodo.
-  const token = parseBearer(input.authorization)
-  if (!token) return { status: 401, body: { ok: false, error: 'unauthorized' } }
-  if (Buffer.byteLength(input.rawBody, 'utf8') > FRAME_MAX_BYTES) return { status: 413, body: { ok: false, error: 'too_large' } }
-
+async function findNode(db: Db, token: string): Promise<NodeRow | undefined> {
   const [node] = await db<NodeRow[]>`
     select n.id, n.kind, n.greenhouse_id, n.label, n.enabled, n.cal_dry, n.cal_wet, g.code, g.flow_lph, g.archived_at,
            t.soil_on, t.soil_off, t.soil_sat, t.temp_max, t.temp_heat, t.temp_cold, t.temp_frost,
@@ -149,6 +163,26 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
       left join iot.greenhouses g on g.id = n.greenhouse_id
       left join iot.thresholds t on t.greenhouse_id = n.greenhouse_id
      where n.token_hash = ${hashToken(token)}`
+  return node
+}
+
+export async function handleIngest(db: Db, input: IngestInput): Promise<IngestResult> {
+  const now = input.now ?? new Date()
+
+  // 1) Autenticación por token del nodo.
+  const token = parseBearer(input.authorization, input.abierto === true)
+  if (!token) return { status: 401, body: { ok: false, error: 'unauthorized' } }
+  if (Buffer.byteLength(input.rawBody, 'utf8') > FRAME_MAX_BYTES) return { status: 413, body: { ok: false, error: 'too_large' } }
+
+  let node = await findNode(db, token)
+  if (!node && input.abierto === true) {
+    // Alta automática: solo si la trama es válida (la basura no crea invernaderos).
+    let probe: unknown
+    try { probe = JSON.parse(input.rawBody) } catch { return { status: 400, body: { ok: false, error: 'invalid', detalle: ['JSON inválido'] } } }
+    const check = parseFrame(probe)
+    if (!check.ok) return { status: 400, body: { ok: false, error: 'invalid', detalle: check.detalle } }
+    if (await registerOpenNode(db, token)) node = await findNode(db, token)
+  }
   if (!node || !node.enabled || node.archived_at) {
     await noteAuthFailure(db, input.ip, !node ? 'unknown_token' : node.archived_at ? 'archived' : 'disabled', now)
     return { status: 401, body: { ok: false, error: 'unauthorized' } }
@@ -161,15 +195,20 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
   } catch {
     return { status: 400, body: { ok: false, error: 'invalid', detalle: ['JSON inválido'] } }
   }
-  const parsed = frameSchema.safeParse(json)
-  if (!parsed.success) {
-    const detalle = parsed.error.issues.slice(0, 6).map((i) => `${i.path.join('.') || 'cuerpo'}: ${i.message}`)
-    return { status: 400, body: { ok: false, error: 'invalid', detalle } }
+  const parsed = parseFrame(json)
+  if (!parsed.ok) return { status: 400, body: { ok: false, error: 'invalid', detalle: parsed.detalle } }
+  const frame = parsed.frame
+  const hops = input.route?.hops
+  const meta: FrameMeta = {
+    transport: input.route?.transport ?? 'http',
+    via: input.route?.via ?? null,
+    hops: hops === undefined || hops === null ? null : Math.max(0, Math.min(15, Math.trunc(hops))),
+    extra: parsed.extra,
+    raw: json,
   }
-  const frame = parsed.data
 
   // 3) Todo lo demás, atómico.
-  const result = await inTransaction(db, (tx) => processFrame(tx, node, frame, now, input.ip))
+  const result = await inTransaction(db, (tx) => processFrame(tx, node, frame, now, input.ip, meta))
 
   // Barrido de nodos caídos (con límite de frecuencia); nunca debe romper la recepción.
   if (result.status === 200 && !result.body.dup && !input.skipSweep) {
@@ -178,7 +217,16 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
   return result
 }
 
-async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: string | null): Promise<IngestResult> {
+/** Lo que se guarda además de los campos del protocolo: ruta de llegada, campos desconocidos y el JSON original. */
+interface FrameMeta {
+  transport: 'mqtt' | 'http' | 'espnow'
+  via: string | null
+  hops: number | null
+  extra: Record<string, unknown> | null
+  raw: unknown
+}
+
+async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: string | null, meta: FrameMeta): Promise<IngestResult> {
   const nodeId = node.id
   const ghId = node.greenhouse_id
   const isGreenhouse = node.kind === 'greenhouse' && ghId !== null && node.soil_on !== null
@@ -216,9 +264,11 @@ async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: 
   const acks = frame.acks ?? []
   const [, openRows, recentRows, expiredRows, ackRows, activeRows, scheduleRows, prevAuto, siteRows] = await Promise.all([
     tx`
-      insert into iot.readings (node_id, greenhouse_id, ts, temp_c, hum_air, soil_raw, soil_pct, light_lux, wind_ms, pump_on, rssi, snr, seq, faults)
+      insert into iot.readings (node_id, greenhouse_id, ts, temp_c, hum_air, soil_raw, soil_pct, light_lux, wind_ms, pump_on, rssi, snr, seq, faults,
+                                boot, via, hops, transport, extra)
       values (${nodeId}, ${ghId}, ${now}, ${s.tempC}, ${s.humAir}, ${s.soilRaw}, ${soilPercent}, ${s.lightLux}, ${s.windMs},
-              ${frame.bomba === 1}, ${num(frame.rssi)}, ${frame.snr ?? null}, ${frame.seq}, ${tx.array(s.faults)}::text[])`,
+              ${frame.bomba === 1}, ${num(frame.rssi)}, ${frame.snr ?? null}, ${frame.seq}, ${tx.array(s.faults)}::text[],
+              ${frame.boot}, ${meta.via}, ${meta.hops}, ${meta.transport}, ${meta.extra === null ? null : jsonb(tx, meta.extra)})`,
     tx<{ trigger: string }[]>`select trigger from iot.irrigation_events where node_id = ${nodeId} and ended_at is null`,
     isGreenhouse
       ? tx<{ ts: Date; soil_raw: number | null; hum_air: number | null }[]>`
@@ -256,7 +306,8 @@ async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: 
 
   // Eventos de la bomba (idempotentes: el índice único garantiza un solo riego abierto por nodo).
   let currentTrigger: string | null = openRows[0]?.trigger ?? null
-  if (ghId !== null) {
+  // `bomba` ausente (JSON de otro grupo, sin bomba): no se sabe nada de riegos, así que no se abre ni se cierra ninguno.
+  if (ghId !== null && frame.bomba !== undefined) {
     for (const ev of events) {
       const ts = new Date(now.getTime() - ev.ago * 1000)
       if (ev.t === 'pump_on') {
@@ -336,7 +387,8 @@ async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: 
       temp_c = ${s.tempC}, hum_air = ${s.humAir}, soil_raw = ${s.soilRaw}, soil_pct = ${soilPercent},
       light_lux = ${s.lightLux}, wind_ms = ${s.windMs}, pump_on = ${frame.bomba === 1},
       pump_state = ${frame.est ?? null}, pump_run_s = ${frame.riego_s ?? null}, cooldown_s = ${frame.esp ?? null},
-      rssi = ${num(frame.rssi)}, snr = ${frame.snr ?? null}, faults = ${tx.array(s.faults)}::text[], cfg_version = ${cfg.ver}
+      rssi = ${num(frame.rssi)}, snr = ${frame.snr ?? null}, faults = ${tx.array(s.faults)}::text[], cfg_version = ${cfg.ver},
+      via = ${meta.via}, hops = ${meta.hops}, transport = ${meta.transport}, raw = ${jsonb(tx, meta.raw)}
      where node_id = ${nodeId}`)
 
   // Bitácora AL FINAL de la ronda: el bloqueo de la cadena de hashes se toma siempre en último lugar,

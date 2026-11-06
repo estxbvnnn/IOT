@@ -5,7 +5,7 @@ import type { Actor, Role } from '../../src/lib/rbac'
 import { hashPassword } from '../../src/lib/auth/password'
 import { generateToken, hashToken } from '../../src/lib/auth/tokens'
 import type { AuthConfig } from '../../src/lib/auth/service'
-import { handleIngest, type IngestResult } from '../../src/lib/services/ingest'
+import { handleIngest, type IngestResult, type RouteInfo } from '../../src/lib/services/ingest'
 
 /** Conexión con el rol de la aplicación (iot_app), igual que el dashboard. */
 export const app: Db = appDb(4)
@@ -77,13 +77,14 @@ export function frameBuilder() {
   })
 }
 
-export function send(tx: Db, token: string | null, body: unknown, now: Date, extra: { raw?: string; skipSweep?: boolean } = {}): Promise<IngestResult> {
+export function send(tx: Db, token: string | null, body: unknown, now: Date, extra: { raw?: string; skipSweep?: boolean; route?: RouteInfo } = {}): Promise<IngestResult> {
   return handleIngest(tx, {
     authorization: token ? `Bearer ${token}` : null,
     rawBody: extra.raw ?? JSON.stringify(body),
     ip: '203.0.113.9',
     now,
     skipSweep: extra.skipSweep ?? true,
+    route: extra.route,
   })
 }
 

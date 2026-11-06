@@ -1,7 +1,7 @@
 # Contrato nodo ↔ servidor (protocolo v1)
 
-Este documento es la **fuente de verdad** del protocolo entre el nodo ESP32 del invernadero
-(`firmware/nodo_invernadero`) y el servidor (`dashboard`, ruta `POST /api/ingest`).
+Este documento es la **fuente de verdad** del protocolo entre el nodo del invernadero
+(`firmware/malla_espnow`, y el simulador) y el servidor (`dashboard`, ruta `POST /api/ingest`).
 El firmware, el simulador y el dashboard se implementan contra este contrato.
 
 Correspondencia con el informe: el informe define el camino
@@ -210,3 +210,20 @@ Si la `cfg` recibida viola estas reglas, el nodo la **ignora completa** y conser
 5. El **corte por tiempo se evalúa en cada vuelta del bucle principal**, no solo al muestrear.
 6. Terminado un riego, empieza `espera_s` antes de otro (protege el motor de arranques repetidos).
 7. Sin conexión o sin servidor, el riego automático **sigue funcionando** con la última `cfg` guardada.
+
+## 7. JSON de otros nodos (ingest tolerante) y ruta de llegada
+
+Desde la migración 0009 el servidor acepta tramas de nodos que no son de este proyecto (otro grupo, otro firmware):
+
+* **Solo `seq` es obligatorio** (≥ 1): sin él no se puede descartar un duplicado. Lo demás, si falta, toma un valor por defecto:
+  `fw = "desconocido"`, `boot = 0`, `up = 0`, sensores `= null`. Si falta `bomba` no se sabe nada de riegos: **no se abre ni se cierra ninguno**.
+* **Nombres alternativos** (el canónico gana si vienen los dos): `temperature`/`temperatura`/`temp_c` → `temp` · `humidity`/`humedad_aire`/`hum_air` → `hum_aire` ·
+  `soil`/`soil_raw`/`suelo`/`soil_moisture` → `suelo_raw` · `lux`/`light` → `luz` · `wind` → `viento` · `pump`/`pump_on`/`relay` → `bomba` (acepta `true`/`false`) ·
+  `sequence`/`counter` → `seq` · `uptime` → `up` · `firmware`/`version` → `fw` · `faults` → `fallas`. Lista completa: `ALIASES` en `src/lib/ingest/normalize.ts`.
+* **Campos desconocidos** se guardan tal cual en `readings.extra` (máx. 20 claves / 2000 caracteres). El último JSON completo queda en `node_state.raw`.
+* **Se descarta, sin rechazar la trama**: `est` desconocido, `rssi` fuera de −160…0, elementos inválidos de `ev`, `acks` y `fallas`, `fw` largo (se recorta a 16).
+* **Se sigue rechazando (400)**: `seq` ausente o < 1, `v` distinta de 1, `boot` fuera de uint32, `bomba` distinta de 0/1/booleano, sensores con tipo equivocado (`temp: "24"`).
+* `suelo_raw` debe estar en 0…1023; fuera de rango se descarta y se anota la falla `suelo_rango` (un sensor de 12 bits debe escalarse antes de enviar).
+
+Cada lectura guarda además **por dónde llegó**: `transport` (`mqtt` | `http` | `espnow`), `via` (nodo de la malla que la subió, o null) y `hops` (saltos por radio).
+`POST /relay/<id>` (pasarela, puerto 3100) lleva esa información en las cabeceras `X-Via` y `X-Saltos`; ver `docs/malla-espnow.md`.

@@ -1,0 +1,4 @@
+# Material de clase y firmware de práctica: nunca se versionan las claves ni los sketches que las llevan pegadas.
+*.pem
+**/espnow_cifrado_a/
+**/espnow_cifrado_b/

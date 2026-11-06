@@ -72,10 +72,9 @@ variables `SUPABASE_DB_*`: `sync` queda inactivo y la Pi funciona igual en local
   desde fuera), ponga un proxy inverso con certificado delante y cambie `FORCE_HTTPS` a `"true"` en `docker-compose.yml`.
 
 ## 3. En cada nodo (NodeMCU)
-1. Arduino IDE: instale la biblioteca **PubSubClient** (Nick O'Leary).
-2. En la CONFIGURACION DEL USUARIO de `nododefinitivo.ino`: `USAR_MQTT 1`, `MQTT_HOST` = IP de la Pi (`hostname -I`; fíjela con una reserva DHCP en el router),
-   `MQTT_USER`/`MQTT_PASS` = los de `.env`, y el `DEVICE_TOKEN` del nodo. Suba el sketch.
-3. El Monitor Serie debe mostrar `MQTT: conectado a IP:1883 como nodo-xxxxxx`. Si dice `estado -2` el nodo no ve la Pi (red distinta, IP mal escrita o puerto 1883
+1. Los nodos usan `firmware/malla_espnow/malla_espnow.ino` (ver [`malla-espnow.md`](malla-espnow.md)): suben por HTTP a `http://IP_DE_LA_PI:3100/relay/<id>`; en `GATEWAY_HOST` va la IP de la Pi (`hostname -I`; fíjela con una reserva DHCP en el router).
+2. En la Pi (modo normal) cree un invernadero por nodo en el dashboard y use su token como identificador; `ACEPTAR_NODOS_NUEVOS` debe quedar en 0. El firmware MQTT anterior (`nododefinitivo`) ya no está en el proyecto; Mosquitto sigue disponible.
+3. (Solo si algún nodo usa MQTT) El Monitor Serie debe mostrar `MQTT: conectado a IP:1883 como nodo-xxxxxx`. Si dice `estado -2` el nodo no ve la Pi (red distinta, IP mal escrita o puerto 1883
    bloqueado); `estado 5` es clave rechazada.
 
 El nodo y la Pi deben estar en la **misma red**. Con `USAR_MQTT 0` el nodo hace POST HTTP a `SERVER_URL` = `http://IP_DE_LA_PI:3100` (la pasarela) o `http://IP_DE_LA_PI:3000` (el dashboard).
@@ -88,10 +87,14 @@ El nodo y la Pi deben estar en la **misma red**. Con `USAR_MQTT 0` el nodo hace 
 
 `<id>` son letras, números, `-` o `_` (máx. 40) y solo indica dónde responder; la identidad del nodo es el token. Códigos: 200, 400, 401, 413, 429, 503.
 
+**Cifrado del payload (opcional):** `tx` y `rx` pueden ir en Base64 (`b64:…`) o cifrados con AES-256-GCM (`aes1:…`); ver [`cifrado-mqtt.md`](cifrado-mqtt.md), que también explica cómo escucharlo con Wireshark.
+
 ## 4. Variables
 | Variable (`.env`) | Por defecto | Qué hace |
 |---|---|---|
 | `MQTT_USER` / `MQTT_PASS` | — | Clave de Mosquitto (nodos y pasarela) |
+| `MQTT_AES_KEY` | vacío | Clave AES-256 (64 hex) compartida con los nodos para cifrar el payload MQTT. Vacío = sin AES |
+| `MQTT_CIFRADO` | `permitir` | `permitir` acepta claro, Base64, AES y RSA; `exigir` solo AES o RSA; `exigir-rsa` solo RSA (clave pública/privada, ver `secrets/` y [`cifrado-mqtt.md`](cifrado-mqtt.md) §5) |
 | `POSTGRES_PASSWORD` | — | Administrador de la base local (solo lo usan `migrate` y `bootstrap`) |
 | `IOT_APP_PASSWORD` | — | Rol `iot_app` de la base local (lo usan gateway, dashboard, sync y tools) |
 | `APP_SECRET` | — | Firma de sesiones del dashboard (≥ 32 caracteres) |

@@ -1,0 +1,5 @@
+# Material de clase con datos sensibles (capturas de red, sketches con WiFi/tokens, claves): nunca al repositorio
+material-clase/capturas-wireshark/
+material-clase/firmware-practica/
+material-clase/para-companero/
+material-clase/scripts/
