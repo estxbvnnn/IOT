@@ -54,6 +54,7 @@ export const frameSchema = z.object({
   suelo_raw: z.number().finite().nullable().default(null),
   luz: nullableNumber.optional(),
   viento: nullableNumber.optional(),
+  flujo_lmin: nullableNumber.optional(),
   bomba: z.union([z.literal(0), z.literal(1)]).optional(),
   riego_s: z.number().int().min(0).max(86_400).optional(),
   est: z.enum(PUMP_STATES).optional(),
@@ -73,6 +74,7 @@ export const RANGES = {
   soil: [0, 1023],
   lux: [0, 65_535],
   wind: [0, 60],
+  flow: [0, 200],
 } as const
 
 export interface SanitizedFrame {
@@ -81,6 +83,7 @@ export interface SanitizedFrame {
   soilRaw: number | null
   lightLux: number | null
   windMs: number | null
+  flowLmin: number | null
   faults: string[]
 }
 
@@ -104,6 +107,7 @@ export function sanitizeFrame(f: Frame): SanitizedFrame {
     soilRaw: soil === null ? null : Math.round(soil),
     lightLux: pick(f.luz, RANGES.lux, 'luz_rango'),
     windMs: pick(f.viento, RANGES.wind, 'viento_rango'),
+    flowLmin: pick(f.flujo_lmin, RANGES.flow, 'flujo_rango'),
     faults: [...faults].sort(),
   }
 }

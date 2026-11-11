@@ -25,7 +25,9 @@ validación, alertas, órdenes de riego y configuración) contra la base local, 
 | `mosquitto` | Broker MQTT con usuario y clave. | 1883 |
 | `gateway` | Recibe las tramas (MQTT, o HTTP para nodos sin MQTT), las guarda y responde. Detecta «nodo sin conexión». | 3100 |
 | `dashboard` | Interfaz web (login, gráficos, alertas, riego) y **API REST `/api/v1`**. | 3000 |
-| `sync` | Copia a Supabase cada `SYNC_INTERVAL_S` (300 s). Solo un sentido: Pi → Supabase. | — |
+| `uplink` | **Envía a la nube (AWS) cada 5 s** las lecturas nuevas, por HTTPS y cifradas con la clave pública de AWS (`AWS_UPLINK_URL`, `AWS_PUBLIC_KEY_FILE`). Sin `AWS_UPLINK_URL` queda inactivo. Ver `docs/malla-espnow.md`. | — |
+| `puente` (perfil `concentrador`) | Une el **concentrador** (un ESP por USB que oye la malla ESP-NOW) con la pasarela: `CONCENTRADOR_DEV=/dev/ttyUSB0 docker compose --profile concentrador up -d puente`. | — |
+| `sync` | Opcional: copia a Supabase cada `SYNC_INTERVAL_S` (300 s). Solo un sentido: Pi → Supabase. | — |
 
 ## 1. Instalar en la Raspberry Pi (Raspberry Pi OS de 64 bits)
 ```bash
@@ -124,3 +126,17 @@ El nodo y la Pi deben estar en la **misma red**. Con `USAR_MQTT 0` el nodo hace 
   proteja el acceso a la Pi (`chmod 600 .env`). MQTT va sin cifrar pero con clave; si la red no es de confianza, añada TLS a Mosquitto.
 - **Pruebas:** `npm test` (unitarias, incluye la pasarela) y, con un PostgreSQL local (`docker compose up -d postgres` con el puerto publicado y las variables `DATABASE_*`),
   `npm run test:db` (incluye `tests/db/sync.test.ts`: copia a Supabase, cursor, borrados, corte de red y arranque inicial).
+
+## 7. La Pi del proyecto (estado del 11-nov-2026) y cómo se actualiza
+- **Acceso:** `ssh iot@iot.local` (con clave; la IP era `10.221.230.220`, pero cambia). Con la IP directa SSH puede decir «Host key verification failed» si esa IP no está en `known_hosts`; usa el nombre `iot.local`. Proyecto en `~/invernadero-iot`.
+- **Servicios en marcha:** `postgres`, `mosquitto`, `gateway`, `dashboard`, `uplink` y `sync` (6 contenedores, los cuatro primeros con healthcheck). El `puente` (concentrador) **no** corre en la Pi todavía: se ejecutó desde un PC.
+- **`.env` de la Pi:** tiene `ACEPTAR_NODOS_NUEVOS='1'` (modo abierto de pruebas) y `MQTT_CIFRADO` en `permitir`. Respaldos del 11-nov: `~/env.respaldo-antes-modo-abierto` y `~/backup-iot-20261111-antes-de-actualizar.sql.gz`.
+- **Claves:** `secrets/mqtt-rsa-private.pem` y `mqtt-rsa-public.pem` (solo en la Pi). El `.ino` lleva la pública; la huella `89a778731578188e` aparece en el registro de la pasarela al arrancar.
+- **Actualizar el código** (sin tocar `secrets/` ni `.env`), desde el PC, en la raíz de `invernadero-iot`:
+  ```bash
+  tar cf - <archivos cambiados> | ssh iot@iot.local "cd ~/invernadero-iot && tar xf -"
+  ssh iot@iot.local "cd ~/invernadero-iot && docker compose up -d --build migrate gateway dashboard"
+  ```
+  `migrate` aplica las migraciones nuevas (mira su registro: `docker compose logs migrate`). La reconstrucción tarda unos minutos y la pasarela se reinicia (los nodos reintentan solos).
+- **Comprobar:** `curl http://iot.local:3100/api/health` (`tramas`, `ultimaTrama`) y `http://iot.local:3000`.
+- **Consultar la base:** `docker compose exec postgres psql -U postgres -d iot -c "select code, name from iot.greenhouses where archived_at is null"`. Los invernaderos se **archivan** (columna `archived_at`, igual que el botón del dashboard), no se borran.

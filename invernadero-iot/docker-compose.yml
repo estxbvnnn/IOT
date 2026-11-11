@@ -1,8 +1,9 @@
-# Raspberry Pi: sistema completo que funciona SIN internet (todo en la red local) y copia a Supabase cada 5 min.
+# Raspberry Pi: sistema completo que funciona SIN internet (todo en la red local) y envía a la nube (AWS) cada 5 s.
 #
-#   NodeMCU ──MQTT :1883──► mosquitto ──► gateway ──► postgres (local) ◄── dashboard :3000  (+ API /api/v1)
-#                                                         │
-#                                                         └── sync (cada SYNC_INTERVAL_S) ──HTTPS──► Supabase (copia en la nube)
+#   nodos ──ESP-NOW (malla)──► concentrador (ESP) ──USB──► puente ──/relay──► gateway ──► postgres (local) ◄── dashboard :3000
+#   (NodeMCU por MQTT :1883 ──► mosquitto ──────────────────────────────────────┘             │
+#                                                                                               ├── uplink (cada 5 s) ──HTTPS, cifrado──► AWS
+#                                                                                               └── sync (opcional)  ──────────────────► Supabase
 #
 #   docker compose up -d --build        arranca todo (y se reinicia solo con la Pi)
 #   docker compose logs -f gateway      ver lo que llega de los nodos        (también: dashboard, sync, postgres)
@@ -159,6 +160,49 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  # Envía a la nube (AWS) lo nuevo cada UPLINK_INTERVAL_S (5 s), cifrado con la clave pública de AWS. Sin AWS_UPLINK_URL queda inactivo.
+  # Es el último tramo del diagrama: la Pi guarda todo en local y solo ella habla con la nube.
+  uplink:
+    logging: *log
+    <<: *tools
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "scripts/uplink.ts"]
+    environment:
+      <<: *db-app
+      AWS_UPLINK_URL: ${AWS_UPLINK_URL:-}
+      AWS_UPLINK_API_KEY: ${AWS_UPLINK_API_KEY:-}
+      AWS_PUBLIC_KEY_FILE: ${AWS_PUBLIC_KEY_FILE:-}     # p. ej. /run/secrets/aws-public.pem (clave PÚBLICA de AWS; la privada solo la tiene AWS)
+      UPLINK_INTERVAL_S: ${UPLINK_INTERVAL_S:-5}
+      UPLINK_SIN_CIFRAR: ${UPLINK_SIN_CIFRAR:-0}        # 1 = sin cifrar, SOLO para pruebas
+    volumes:
+      - ./secrets:/run/secrets:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Puente con el CONCENTRADOR (un ESP por USB que oye la malla ESP-NOW). Solo en la Pi, con el ESP conectado:
+  #   CONCENTRADOR_DEV=/dev/ttyUSB0 docker compose --profile concentrador up -d puente
+  # (En el PC con Windows no se usa Docker para esto: corra `npm run puente -- COM4` en dashboard/.)
+  puente:
+    logging: *log
+    <<: *tools
+    profiles: ["concentrador"]
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "scripts/puente-serie.ts", "${CONCENTRADOR_DEV:-/dev/ttyUSB0}"]
+    environment:
+      GATEWAY_URL: http://gateway:3100
+    devices:
+      - "${CONCENTRADOR_DEV:-/dev/ttyUSB0}:${CONCENTRADOR_DEV:-/dev/ttyUSB0}"
+    group_add:
+      - dialout                                         # permiso para abrir el puerto serie
+    healthcheck:
+      disable: true
+    depends_on:
+      gateway:
+        condition: service_started
 
   # ---- Herramientas de una sola vez (no arrancan con `up`; se usan con `docker compose run --rm <nombre>`) ----
 

@@ -68,6 +68,7 @@ independiente del transporte: si se vuelve a LoRaWAN, solo cambia quién entrega
 | `suelo_raw` | int \| null | sí | Lectura del YL-38 **en escala 0…1023** (ver §5). `null` si el sensor falló. |
 | `luz` | number \| null | no | Lux del BH1750 (0…65535). Omitir o `null` si no hay sensor. |
 | `viento` | number \| null | no | m/s del anemómetro. Solo el nodo del mástil. |
+| `flujo_lmin` | number \| null | no | Caudal de agua instantáneo en L/min (0…200; sensor de pulsos tipo YF-S201). Fuera de rango se descarta y se anota la falla `flujo_rango`. |
 | `bomba` | 0 \| 1 | sí | `1` = relé cerrado (bomba encendida). |
 | `riego_s` | int | no | Segundos que lleva el ciclo de riego en curso (0 si está apagada). |
 | `est` | string | no | Estado del controlador: `idle` · `riego` · `espera` · `bloq_temp` · `bloq_sensor` · `saturado`. |
@@ -219,7 +220,7 @@ Desde la migración 0009 el servidor acepta tramas de nodos que no son de este p
   `fw = "desconocido"`, `boot = 0`, `up = 0`, sensores `= null`. Si falta `bomba` no se sabe nada de riegos: **no se abre ni se cierra ninguno**.
 * **Nombres alternativos** (el canónico gana si vienen los dos): `temperature`/`temperatura`/`temp_c` → `temp` · `humidity`/`humedad_aire`/`hum_air` → `hum_aire` ·
   `soil`/`soil_raw`/`suelo`/`soil_moisture` → `suelo_raw` · `lux`/`light` → `luz` · `wind` → `viento` · `pump`/`pump_on`/`relay` → `bomba` (acepta `true`/`false`) ·
-  `sequence`/`counter` → `seq` · `uptime` → `up` · `firmware`/`version` → `fw` · `faults` → `fallas`. Lista completa: `ALIASES` en `src/lib/ingest/normalize.ts`.
+  `flujo`/`caudal`/`flow`/`flow_rate`/`water_flow` → `flujo_lmin` · `sequence`/`counter` → `seq` · `uptime` → `up` · `firmware`/`version` → `fw` · `faults` → `fallas`. Lista completa: `ALIASES` en `src/lib/ingest/normalize.ts`.
 * **Campos desconocidos** se guardan tal cual en `readings.extra` (máx. 20 claves / 2000 caracteres). El último JSON completo queda en `node_state.raw`.
 * **Se descarta, sin rechazar la trama**: `est` desconocido, `rssi` fuera de −160…0, elementos inválidos de `ev`, `acks` y `fallas`, `fw` largo (se recorta a 16).
 * **Se sigue rechazando (400)**: `seq` ausente o < 1, `v` distinta de 1, `boot` fuera de uint32, `bomba` distinta de 0/1/booleano, sensores con tipo equivocado (`temp: "24"`).
@@ -227,3 +228,5 @@ Desde la migración 0009 el servidor acepta tramas de nodos que no son de este p
 
 Cada lectura guarda además **por dónde llegó**: `transport` (`mqtt` | `http` | `espnow`), `via` (nodo de la malla que la subió, o null) y `hops` (saltos por radio).
 `POST /relay/<id>` (pasarela, puerto 3100) lleva esa información en las cabeceras `X-Via` y `X-Saltos`; ver `docs/malla-espnow.md`.
+
+**Modo abierto y cambio de nombre (solo pruebas, `ACEPTAR_NODOS_NUEVOS=1`).** La `<id>` de `/relay/<id>` (y del tema MQTT `invernadero/<id>/tx`) es el id del chip, p. ej. `nodo-85bbc8`; la credencial es el identificador que va dentro del mensaje (p. ej. `GrupoSavka`). La pasarela liga cada `<id>` a su nodo (`iot.open_devices`): si llega un identificador desconocido desde un `<id>` ya ligado a un invernadero activo, **renombra** ese invernadero (nombre, código si es válido y está libre, y la credencial) en lugar de crear otro; queda en la bitácora como `device.rename`. En modo normal (con tokens) no se usa.

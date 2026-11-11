@@ -3,3 +3,17 @@ material-clase/capturas-wireshark/
 material-clase/firmware-practica/
 material-clase/para-companero/
 material-clase/scripts/
+
+# Material de clase NUEVO (transcripciones, resúmenes, fotos de la pizarra, apuntes de la práctica): queda en el disco, fuera del repositorio.
+# (Lo que ya estaba versionado antes sigue versionado; esto solo evita agregar lo nuevo con «git add .».)
+material-clase/ESPNOW.txt
+material-clase/Resumen_*
+material-clase/Transcripci*
+material-clase/photo_2026-10-1[1-9]*
+material-clase/photo_2026-10-[23]*
+material-clase/photo_2026-1[12]*
+material-clase/docs/cifrado-mqtt.md
+material-clase/docs/espnow.md
+
+# Foto del diagrama: la copia que se versiona es invernadero-iot/docs/diagrama-objetivo.jpeg
+/WhatsApp Image *.jpeg

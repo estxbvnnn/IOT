@@ -22,7 +22,7 @@ interface GhRow {
   id: number; code: string; name: string; crop: string | null; x_m: number; y_m: number; area_m2: number | null
   node_id: number | null; enabled: boolean | null
   ts: Date | null; temp_c: number | null; hum_air: number | null; soil_raw: number | null; soil_pct: number | null
-  light_lux: number | null; pump_on: boolean | null; pump_state: PumpState | null; pump_run_s: number | null
+  light_lux: number | null; flow_lmin: number | null; pump_on: boolean | null; pump_state: PumpState | null; pump_run_s: number | null
   cooldown_s: number | null; faults: string[] | null
   soil_on: number; soil_off: number; soil_sat: number; temp_max: number; temp_heat: number; temp_cold: number
   temp_frost: number; hum_air_min: number; hum_air_max: number; pump_max_s: number; pump_wait_s: number
@@ -58,7 +58,7 @@ async function loadGreenhouseSummaries(db: Db, ids: readonly number[] | null, no
     db<GhRow[]>`
       select g.id, g.code, g.name, g.crop, g.x_m, g.y_m, g.area_m2,
              n.id as node_id, n.enabled,
-             s.ts, s.temp_c, s.hum_air, s.soil_raw, s.soil_pct, s.light_lux, s.pump_on, s.pump_state, s.pump_run_s, s.cooldown_s, s.faults,
+             s.ts, s.temp_c, s.hum_air, s.soil_raw, s.soil_pct, s.light_lux, s.flow_lmin, s.pump_on, s.pump_state, s.pump_run_s, s.cooldown_s, s.faults,
              t.soil_on, t.soil_off, t.soil_sat, t.temp_max, t.temp_heat, t.temp_cold, t.temp_frost, t.hum_air_min, t.hum_air_max,
              t.pump_max_s, t.pump_wait_s, t.interval_s, t.auto_enabled, t.version, t.updated_at
         from iot.greenhouses g
@@ -120,7 +120,7 @@ async function loadGreenhouseSummaries(db: Db, ids: readonly number[] | null, no
       lastSeen: r.ts?.toISOString() ?? null, ageS, online, status,
       tempC: r.temp_c, humAir: r.hum_air, soilRaw: r.soil_raw, soilPct: r.soil_pct,
       band: r.soil_raw === null ? null : soilBand(r.soil_raw, { sat: r.soil_sat, on: r.soil_on }),
-      lightLux: r.light_lux, pumpOn: r.pump_on, pumpState: r.pump_state, pumpRunS: r.pump_run_s, cooldownS: r.cooldown_s,
+      lightLux: r.light_lux, flowLmin: r.flow_lmin, pumpOn: r.pump_on, pumpState: r.pump_state, pumpRunS: r.pump_run_s, cooldownS: r.cooldown_s,
       faults: r.faults ?? [], openAlerts: al, thresholds: toThresholdsDTO({
         soil_on: r.soil_on, soil_off: r.soil_off, soil_sat: r.soil_sat, temp_max: r.temp_max, temp_heat: r.temp_heat,
         temp_cold: r.temp_cold, temp_frost: r.temp_frost, hum_air_min: r.hum_air_min, hum_air_max: r.hum_air_max,

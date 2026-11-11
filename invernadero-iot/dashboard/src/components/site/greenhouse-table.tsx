@@ -4,7 +4,7 @@ import { SoilMeter } from '@/components/ui/soil-meter'
 import { Sparkline } from '@/components/ui/sparkline'
 import { BandChip, PumpChip, STATUS_META, StatusChip } from '@/components/ui/status'
 import type { GreenhouseSummary } from '@/lib/domain/types'
-import { fmtAgo, fmtDuration, fmtLux, fmtNum } from '@/lib/format'
+import { fmtAgo, fmtDuration, fmtNum } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { Sprout } from 'lucide-react'
 import { RowLinks } from './row-links'
@@ -43,7 +43,7 @@ export function GreenhouseTable({ greenhouses, linkable, id }: { greenhouses: re
                 <th scope="col">Temp.</th>
                 <th scope="col">Hum. aire</th>
                 <th scope="col">Suelo (0–1023)</th>
-                <th scope="col">Luz</th>
+                <th scope="col">Flujo de agua</th>
                 <th scope="col">Bomba</th>
                 <th scope="col">Tendencia suelo 6 h</th>
                 <th scope="col">Última lectura</th>
@@ -78,7 +78,7 @@ export function GreenhouseTable({ greenhouses, linkable, id }: { greenhouses: re
                         </div>
                       </div>
                     </td>
-                    <td className={dim}>{fmtLux(g.lightLux)}</td>
+                    <td className={dim}>{g.flowLmin === null ? '—' : `${fmtNum(g.flowLmin, 2)} L/min`}</td>
                     <td>
                       {stale ? (
                         <span className="text-ink-3" title="Sin conexión: estado de la bomba desconocido">—</span>

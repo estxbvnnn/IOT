@@ -41,20 +41,20 @@ describe('POST /relay/<id>: carga de la malla ESP-NOW', () => {
     const txt = await res.text()
     expect(txt.startsWith('200 0\n')).toBe(true)
     expect(JSON.parse(txt.slice(6))).toMatchObject({ ok: true })
-    expect(h.calls[0]!.route).toEqual({ transport: 'http', via: null, hops: null })
+    expect(h.calls[0]!.route).toEqual({ transport: 'http', via: null, hops: null, device: 'nodo-aaaaaa' })
     expect(h.calls[0]!.authorization).toBe(`Bearer ${TOKEN}`)
   })
 
   it('un vecino sube la trama de otro: transporte espnow con la vía y los saltos', async () => {
     h = await start()
     await relay('nodo-aaaaaa', `${TOKEN}\n{"seq":2}`, { 'X-Via': 'nodo-bbbbbb', 'X-Saltos': '2' })
-    expect(h.calls[0]!.route).toEqual({ transport: 'espnow', via: 'nodo-bbbbbb', hops: 2 })
+    expect(h.calls[0]!.route).toEqual({ transport: 'espnow', via: 'nodo-bbbbbb', hops: 2, device: 'nodo-aaaaaa' })
   })
 
   it('ignora cabeceras de ruta mal formadas', async () => {
     h = await start()
     await relay('nodo-aaaaaa', `${TOKEN}\n{"seq":3}`, { 'X-Via': 'nodo;DROP', 'X-Saltos': '99' })
-    expect(h.calls[0]!.route).toEqual({ transport: 'espnow', via: null, hops: null })
+    expect(h.calls[0]!.route).toEqual({ transport: 'espnow', via: null, hops: null, device: 'nodo-aaaaaa' })
   })
 
   it('acepta un JSON con solo seq (el de otro grupo) y rechaza uno sin seq', async () => {

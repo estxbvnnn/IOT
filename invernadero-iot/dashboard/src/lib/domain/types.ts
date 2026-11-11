@@ -56,6 +56,8 @@ export interface GreenhouseSummary {
   soilPct: number | null
   band: SoilBand | null
   lightLux: number | null
+  /** Caudal de agua instantáneo (L/min) que informa el nodo. */
+  flowLmin: number | null
   pumpOn: boolean | null
   pumpState: PumpState | null
   pumpRunS: number | null

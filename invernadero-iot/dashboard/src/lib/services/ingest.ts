@@ -9,7 +9,10 @@ import {
   evaluateGreenhouse, evaluatePumpAnomaly, evaluateWind,
 } from '../alerts/engine'
 import { applyAlerts, sweepOfflineNodes } from './alerts'
-import { registerOpenNode } from './open-nodes'
+import { bindOpenDevice, registerOpenNode, renameOpenNode } from './open-nodes'
+
+/** chip -> nodo ya registrado en `iot.open_devices` por este proceso (evita una escritura por trama). */
+const boundDevices = new Map<string, number>()
 import { audit } from './audit'
 import { deliveryWindowS } from './commands'
 import { isScheduleDue, localParts } from './schedules'
@@ -35,6 +38,8 @@ export interface RouteInfo {
   transport: 'mqtt' | 'http' | 'espnow'
   via?: string | null
   hops?: number | null
+  /** Id de chip de la placa de origen tal como llega en la ruta («nodo-85bbc8»). Solo el modo abierto lo usa, para no duplicar al renombrar. */
+  device?: string | null
 }
 
 export interface IngestInput {
@@ -181,7 +186,20 @@ export async function handleIngest(db: Db, input: IngestInput): Promise<IngestRe
     try { probe = JSON.parse(input.rawBody) } catch { return { status: 400, body: { ok: false, error: 'invalid', detalle: ['JSON inválido'] } } }
     const check = parseFrame(probe)
     if (!check.ok) return { status: 400, body: { ok: false, error: 'invalid', detalle: check.detalle } }
-    if (await registerOpenNode(db, token)) node = await findNode(db, token)
+    // Misma placa con otro nombre (se volvió a subir el firmware): se renombra su invernadero en vez de crear un duplicado.
+    const device = input.route?.device ?? null
+    const renombrado = device !== null && (await renameOpenNode(db, device, token))
+    if (renombrado || (await registerOpenNode(db, token, device))) node = await findNode(db, token)
+  } else if (node && input.abierto === true) {
+    // Nodo ya conocido: se recuerda de qué chip viene (una vez por proceso y par chip-nodo, no en cada trama).
+    const device = input.route?.device ?? null
+    if (device !== null && boundDevices.get(device) !== node.id) {
+      try {
+        await bindOpenDevice(db, device, node.id)
+        boundDevices.set(device, node.id)
+        if (boundDevices.size > 500) boundDevices.clear()
+      } catch { /* el registro del chip nunca debe impedir guardar la trama */ }
+    }
   }
   if (!node || !node.enabled || node.archived_at) {
     await noteAuthFailure(db, input.ip, !node ? 'unknown_token' : node.archived_at ? 'archived' : 'disabled', now)
@@ -265,10 +283,10 @@ async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: 
   const [, openRows, recentRows, expiredRows, ackRows, activeRows, scheduleRows, prevAuto, siteRows] = await Promise.all([
     tx`
       insert into iot.readings (node_id, greenhouse_id, ts, temp_c, hum_air, soil_raw, soil_pct, light_lux, wind_ms, pump_on, rssi, snr, seq, faults,
-                                boot, via, hops, transport, extra)
+                                boot, via, hops, transport, extra, flow_lmin)
       values (${nodeId}, ${ghId}, ${now}, ${s.tempC}, ${s.humAir}, ${s.soilRaw}, ${soilPercent}, ${s.lightLux}, ${s.windMs},
               ${frame.bomba === 1}, ${num(frame.rssi)}, ${frame.snr ?? null}, ${frame.seq}, ${tx.array(s.faults)}::text[],
-              ${frame.boot}, ${meta.via}, ${meta.hops}, ${meta.transport}, ${meta.extra === null ? null : jsonb(tx, meta.extra)})`,
+              ${frame.boot}, ${meta.via}, ${meta.hops}, ${meta.transport}, ${meta.extra === null ? null : jsonb(tx, meta.extra)}, ${s.flowLmin})`,
     tx<{ trigger: string }[]>`select trigger from iot.irrigation_events where node_id = ${nodeId} and ended_at is null`,
     isGreenhouse
       ? tx<{ ts: Date; soil_raw: number | null; hum_air: number | null }[]>`
@@ -385,7 +403,7 @@ async function processFrame(tx: Db, node: NodeRow, frame: Frame, now: Date, ip: 
     update iot.node_state set
       ts = ${now}, fw_version = ${frame.fw}, boot_id = ${frame.boot}, last_seq = ${frame.seq}, uptime_s = ${frame.up},
       temp_c = ${s.tempC}, hum_air = ${s.humAir}, soil_raw = ${s.soilRaw}, soil_pct = ${soilPercent},
-      light_lux = ${s.lightLux}, wind_ms = ${s.windMs}, pump_on = ${frame.bomba === 1},
+      light_lux = ${s.lightLux}, wind_ms = ${s.windMs}, flow_lmin = ${s.flowLmin}, pump_on = ${frame.bomba === 1},
       pump_state = ${frame.est ?? null}, pump_run_s = ${frame.riego_s ?? null}, cooldown_s = ${frame.esp ?? null},
       rssi = ${num(frame.rssi)}, snr = ${frame.snr ?? null}, faults = ${tx.array(s.faults)}::text[], cfg_version = ${cfg.ver},
       via = ${meta.via}, hops = ${meta.hops}, transport = ${meta.transport}, raw = ${jsonb(tx, meta.raw)}

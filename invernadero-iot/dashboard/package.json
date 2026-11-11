@@ -22,6 +22,9 @@
     "db:superadmin": "tsx scripts/db-superadmin.ts",
     "gateway": "tsx scripts/gateway.ts",
     "sync": "tsx scripts/sync.ts",
+    "uplink": "tsx scripts/uplink.ts",
+    "aws:mock": "tsx scripts/aws-mock.ts",
+    "puente": "tsx scripts/puente-serie.ts",
     "sync:bootstrap": "tsx scripts/sync-bootstrap.ts",
     "api:key": "tsx scripts/api-key.ts",
     "e2e": "tsx scripts/e2e.ts",
@@ -39,6 +42,7 @@
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "serialport": "^13.0.0",
     "server-only": "^0.0.1",
     "zod": "^4.6.5"
   },

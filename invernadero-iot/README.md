@@ -2,7 +2,7 @@
 
 Implementación funcional del informe **«Diseño de una solución IoT para el monitoreo y riego automático de invernaderos»**
 (INACAP · Seguridad IoT · alternativa 2, bajo costo). Incluye el **firmware de la malla ESP-NOW** (un solo `.ino` para todas las placas),
-la **pasarela** (Raspberry Pi, o el PC mientras tanto), una **base de datos** (PostgreSQL local con copia a Supabase) y un **dashboard web en
+el **concentrador** USB, la **pasarela** (Raspberry Pi, o el PC mientras tanto), una **base de datos** (PostgreSQL local, con envío cifrado a la nube cada 5 s) y un **dashboard web en
 TypeScript** con control de acceso por rol.
 
 ## Capturas
@@ -17,53 +17,73 @@ TypeScript** con control de acceso por rol.
 
 <sub>Capturas de referencia tomadas durante el desarrollo, con datos **simulados**; la interfaz puede diferir en detalles menores.</sub>
 
-## Estado actual (6 de noviembre de 2026)
+## Estado actual (11 de noviembre de 2026)
 
-**Objetivo:** que todas las placas ejecuten el mismo `.ino` y formen una **malla**. Si un nodo no consigue que el servidor le responda, otro nodo sube sus datos por ESP-NOW. Solo la Raspberry Pi (por ahora, el PC) sube a la nube.
+**Objetivo (el diagrama del proyecto, [`docs/diagrama-objetivo.jpeg`](docs/diagrama-objetivo.jpeg)):** una red de hasta 10 invernaderos en malla (mesh) con cifrado de extremo a extremo.
+Cada invernadero mide **temperatura, humedad y flujo de agua**. Un **concentrador** (un ESP por USB) une la malla con la **Raspberry Pi**, que guarda todo en local y **cada 5 s** lo envía a **AWS**.
+
+![Diagrama objetivo](docs/diagrama-objetivo.jpeg)
 
 ```
-nodo sin red ──ESP-NOW──► vecino CON red ──POST /relay/<id>──► pasarela (PC/Pi) ──► PostgreSQL ──(sync cada 5 min)──► Supabase
-      ▲                                                                │
-      └────────── respuesta cifrada (vuelve por radio) ◄───────────────┘
+Invernadero 1..10 (NodeMCU, mismo .ino)        Concentrador (ESP)        Raspberry Pi (o el PC que la simula)               Nube
+ mide y cifra ──ESP-NOW──► vecinos reenvían ──►  oye la malla  ──USB──►  puente ► pasarela ► PostgreSQL ► dashboard ──5 s──► AWS
+        ▲   (TTL 3, sin WiFi, canal fijo)         @RX / @TX                       │  (descifra con su clave privada)        (cifrado
+        └────────────── respuesta cifrada (vuelve por radio hasta el origen) ◄────┘                                         con su clave pública)
 ```
+
+### Cómo encaja cada parte del diagrama
+| Diagrama | En el proyecto |
+|---|---|
+| 10 nodos en malla, «todos se conocen», ida y vuelta, multi-salto | Un solo `.ino` (`PERFIL 0`): radio ESP-NOW en un canal fijo, **sin WiFi**. Reenvío por inundación con TTL 3. Cada nodo emite una **baliza** cada 30 s y arma su tabla de nodos conocidos (`vecinos` en el JSON). |
+| Temperatura, humedad y **flujo de agua (L/min)** | `armarJson` envía `temp`, `hum_aire`, `suelo_raw` y `flujo_lmin` (sensor de pulsos YF-S201 con `USAR_SENSOR_FLUJO 1`; simulado por defecto). Columna `flow_lmin` (migración `0010`) y tarjeta «Flujo de agua» en el dashboard. |
+| **Concentrador Principal (ESP)** ↔ Raspberry Pi | `PERFIL 1` del mismo `.ino`: entrega cada mensaje a la Pi por USB (`@RX`) y devuelve la respuesta por la malla (`@TX`). En la Pi/PC corre el **puente serie** (`npm run puente`, `dashboard/scripts/puente-serie.ts`), que sube a la pasarela con `POST /relay/<id>`. |
+| Raspberry Pi: servidor local, BD local | PostgreSQL + gateway + dashboard (`docker-compose.yml`). Funciona igual sin internet. |
+| Pi → **AWS cada 5 s**, datos cifrados con la clave pública de AWS | Servicio `uplink` (`npm run uplink`): lotes JSON por HTTPS a `AWS_UPLINK_URL`, cifrados con **RSA-2048 + AES-256-GCM** con la clave pública de AWS (`AWS_PUBLIC_KEY_FILE`). El avance se guarda en `iot.uplink_state` (migración `0011`): si no hay internet no se pierde nada. `npm run aws:mock` simula la nube para probar. |
+| Cifrado AES-256, solo el destino descifra | RSA-2048-OAEP envuelve una clave AES-256 de un solo uso; AES-256-GCM. Los nodos intermedios y el concentrador **no abren nada**. |
 
 ### Qué se hizo
-- **Firmware único** `firmware/malla_espnow/malla_espnow.ino` (NodeMCU/ESP8266): cifrado RSA-2048 + AES-256-GCM de extremo a extremo, reenvío por inundación con TTL 3 y detección de duplicados. Los nodos intermedios **no abren** el contenido. Selector `PERFIL` (0 = todas las placas; 1 y 2 = pruebas con dos placas). El WiFi y la IP van en `config_local.h` (fuera de git; plantilla en `config_local.example.h`).
-- **Detección del canal:** una placa que no consigue conectar al WiFi busca el router por su nombre y usa **su canal**, para seguir oyendo a los vecinos. Reintenta la conexión cada 30 s.
-- **Pasarela:** `POST /relay/<id>` (mismo pipeline que MQTT), con las cabeceras `X-Via` y `X-Saltos`. Cada lectura guarda su ruta (`transport`, `via`, `hops`) — migración `0009_origen_ruta.sql`.
-- **Ingesta tolerante:** acepta JSON con campos faltantes o extra (solo `seq` es obligatorio), entiende alias (`temperature`, `humidity`, `soil`…) y guarda lo desconocido en `extra`.
-- **Modo abierto de pruebas** (`ACEPTAR_NODOS_NUEVOS=1`): sin tokens, cada identificador nuevo se da de alta solo y se coloca en un hueco libre del mapa (ya no se superponen).
-- **Dashboard:** la tabla de *Equipos* muestra la ruta («Directo · HTTP» o «Vía nodo-xxxx · N salto(s)») y el último JSON recibido.
-- **El PC hace de Pi** con Docker (`docker-compose.yml`, `.env.pc`) y `scripts/firewall-pasarela-pc.ps1` (abre y **cierra** los puertos 3100 y 3000).
-- **Limpieza:** se eliminó el firmware anterior (`nodo_invernadero*`, `test/`, `tools/`). El material de clase y las prácticas viven en `material-clase/` (fuera del proyecto y de git).
+- **Firmware único** `firmware/malla_espnow/malla_espnow.ino` con `PERFIL` 0 (nodo), 1 (concentrador) y 2 (nodo con WiFi, respaldo del modo anterior). Los tres compilan para NodeMCU (core 3.1.2).
+- **Pasarela:** `POST /relay/<id>` (mismo pipeline que MQTT) con `X-Via` y `X-Saltos`; cada lectura guarda su ruta (`transport`, `via`, `hops`) — migración `0009`.
+- **Ingesta tolerante:** acepta JSON con campos faltantes o extra (solo `seq` es obligatorio), entiende alias (`temperature`, `caudal`, `flow`…) y guarda lo desconocido en `extra`.
+- **Modo abierto de pruebas** (`ACEPTAR_NODOS_NUEVOS=1`): sin tokens, cada identificador nuevo se da de alta solo y se coloca en un hueco libre del mapa (sin superposiciones).
+- **Corre en la Raspberry Pi real** (`iot@iot.local`, carpeta `~/invernadero-iot`): PostgreSQL, Mosquitto, pasarela, dashboard (`http://<ip-de-la-pi>:3000`), `uplink` y `sync`, con las migraciones hasta la `0012`. El PC ya no hace de servidor (sigue sirviendo para pruebas: `scripts/firewall-pasarela-pc.ps1` abre y **cierra** los puertos 3100 y 3000). La Pi lleva la clave **privada** RSA (`secrets/`, fuera de git); el `.ino` lleva la **pública** (huella `89a778731578188e`).
+- **Probado con placas reales (11-nov):** un concentrador (`PERFIL 1`, COM6) y dos nodos (`PERFIL 0`) → puente en el PC → pasarela de la Pi → PostgreSQL → dashboard. Las lecturas llegan con `transport=espnow`, `via` y `hops=1`.
+- **Una placa que cambia de nombre no se duplica:** la pasarela liga cada id de chip (`nodo-xxxxxx`) a su nodo (`iot.open_devices`, migración `0012`) y, si llega un nombre nuevo desde un chip conocido, **renombra** su invernadero conservando historial, umbrales y lugar en el mapa. Detalle y excepciones en [`docs/malla-espnow.md`](docs/malla-espnow.md).
+- **Pruebas automáticas:** 261 pruebas unitarias pasan (incluye puente, envío cifrado y flujo de agua) y 6 pruebas de base de datos nuevas (`tests/db/open-nodes.test.ts`, cambio de nombre sin duplicar). Comprobado de punta a punta: mensaje cifrado → puente → pasarela → respuesta que el nodo abre; lecturas con `flujo_lmin` → `uplink` → «AWS de prueba», que las descifra.
 
 ### Placas de prueba y MAC
 | Placa | MAC | Nombre en el sistema | Notas |
 |---|---|---|---|
-| Placa 1 (puerto COM6 en las pruebas) | `A4:CF:12:FE:F2:CC` | `nodo-fef2cc` | La que conecta de forma más fiable al WiFi |
-| Placa 2 (puerto COM4 en las pruebas) | `FC:F5:C4:8D:57:2E` | `nodo-8d572e` | Tuvo fallos al conectar al arrancar; se usa como la placa «sin red» |
-| Placa del compañero (práctica `espnow_cifrado`, en `material-clase/`) | `78:1C:3C:85:BB:C8` | — | Solo para la práctica entre grupos |
+| Placa 1 (COM6 en las pruebas) | `A4:CF:12:FE:F2:CC` | `nodo-fef2cc` | **Concentrador** (`PERFIL 1`) en las pruebas del 11-nov |
+| Placa 2 | `FC:F5:C4:8D:57:2E` | `nodo-8d572e` | Tuvo fallos al conectar al WiFi al arrancar; no participó el 11-nov |
+| Placa del compañero (práctica `espnow_cifrado`, en `material-clase/`) | `78:1C:3C:85:BB:C8` | `nodo-85bbc8` | Nodo (`PERFIL 0`); en el dashboard quedó como `GrupoSavka` |
+| Placa de otra persona | (sin anotar) | `nodo-63c927` | Nodo (`PERFIL 0`); pasó por `grupo-1` y quedó como `Invernadero-DiazRamos` (código `I16`) |
 
-La malla (`malla_espnow`) **no usa MAC**: difunde a todos. Solo la práctica `espnow_cifrado` y el firmware anterior usaban `SOCIO_MAC`. En los dispositivos de prueba, el identificador de cada placa sale de su chip (`nodo-<últimos 6 hex de la MAC>`).
+La malla **no usa MAC**: difunde a todos. El identificador de cada placa sale de su chip (`nodo-<últimos 6 hex de la MAC>`) y es lo que la pasarela usa para reconocerla aunque cambie de nombre.
 
-### Cómo probar la malla con dos placas
-1. En `invernadero-iot`: `docker compose --env-file .env --env-file .env.pc up -d postgres migrate gateway dashboard` y abre el puerto con `.\scripts\firewall-pasarela-pc.ps1 -Abrir` (como administrador).
-2. Copia `firmware/malla_espnow/config_local.example.h` a `config_local.h` y pon tu WiFi (2,4 GHz) y la IP del PC.
-3. Sube el mismo archivo a las dos placas con `PERFIL 0`.
-4. En el celular (punto de acceso), **bloquea la MAC de una placa**: pasa a radio y la otra sube sus datos. Verás «Vía nodo-xxxx · 1 salto» en *Equipos*. Desbloquéala para ver que vuelve a «Directo».
+### Cómo probar con dos placas (el diagrama en pequeño)
+1. **Servidor:** la Raspberry Pi ya lo tiene en marcha (`docker compose up -d` en `~/invernadero-iot`, con `ACEPTAR_NODOS_NUEVOS=1` en su `.env`). Para probar con el PC en su lugar: `docker compose --env-file .env --env-file .env.pc up -d --build postgres migrate gateway dashboard`.
+2. Sube el `.ino` con `PERFIL 1` (concentrador) a **una** placa y con `PERFIL 0` (nodo) a las demás; cada nodo con su `NOMBRE_NODO` distinto. No hace falta WiFi ni `config_local.h`.
+3. Conecta el concentrador por USB al PC y, en `dashboard/`, ejecuta `GATEWAY_URL=http://<ip-de-la-pi>:3100 npm run puente -- COM6` (el puerto de esa placa; en PowerShell: `$env:GATEWAY_URL=...`). **Cierra antes el Monitor Serie del Arduino IDE**: el puerto no se comparte (si no, el puente repite «Access denied»). Debe decir `Concentrador conectado`. Más adelante el concentrador pasa a la Pi: `CONCENTRADOR_DEV=/dev/ttyUSB0 docker compose --profile concentrador up -d puente`.
+4. En ~10 s el nodo envía por radio; el puente muestra `<< nodo-… seq N (1 salto…) → pasarela` y `>> respuesta … (por la malla)`. En *Equipos* aparece «Vía nodo-… · 1 salto» y el flujo de agua en el invernadero.
+5. Para la nube de prueba: `npm run aws:mock` (en otra terminal) y en `.env`: `AWS_UPLINK_URL=http://host.docker.internal:4010/ingest`, `AWS_PUBLIC_KEY_FILE=/run/secrets/aws-mock-public.pem`, luego `docker compose … up -d uplink`.
 
 Guía completa y cómo revertirlo todo: [`docs/malla-espnow.md`](docs/malla-espnow.md) y [`PRUEBAS_TEMPORALES.md`](PRUEBAS_TEMPORALES.md).
 
-### Qué falta
-- **La malla aún no es estable.** Con dos placas reales una lectura cruzó por radio con 1 salto, pero después las lecturas de la placa bloqueada dejaron de llegar. Falta ver el Monitor Serie de la placa que sube para saber si no oye los fragmentos, no los sube o falla la respuesta.
-- **Salida serie corrupta:** durante la transmisión por radio el Monitor Serie se llena de caracteres repetidos. Parece cable/alimentación USB, sin confirmar; hay que probar otro cable o un puerto con buena alimentación.
-- **Más de un salto** no está probado: se necesita una tercera placa.
-- **Sensores reales:** el firmware de la malla envía datos **simulados** (`armarJson`). Falta integrar DHT22, YL-38 y la bomba (el firmware anterior con sensores está en el historial de git y en `material-clase/`).
-- **Raspberry Pi real:** todo se probó con el PC como pasarela. Falta desplegar en la Pi (`scripts/deploy-pi.ps1`), usar el modo normal con tokens (`ACEPTAR_NODOS_NUEVOS=0`) y revisar el firewall.
-- **Migración `0009` en Supabase:** está aplicada solo en la base local. Si no se aplica en Supabase, el servicio `sync` omite `readings`.
-- **Pruebas de base de datos:** los tests nuevos de `tests/db` (ruta, ingesta tolerante, alta abierta) no se han ejecutado contra PostgreSQL. Los 227 tests unitarios pasan.
-- **Seguridad antes de producción:** `POST /relay` no pide autenticación HTTP y el modo abierto acepta cualquier identificador (tope de 60 invernaderos). Hay que cerrarlos antes de entregar (ver `PRUEBAS_TEMPORALES.md`).
-- **Datos de prueba:** quedan invernaderos de pruebas anteriores (`GRUPO-A`, `GRUPO-B`) sin datos; se pueden borrar.
+### Qué falta (dicho sin adornos)
+- **La respuesta de vuelta a las placas no está confirmada.** Las lecturas llegan a la Pi y la pasarela contesta, pero el 11-nov se vio a una placa repetir el mismo `seq` tres veces (la respuesta no le volvió en ese momento). No se diagnosticó si fue una pérdida de radio puntual o algo repetible: falta mirar el Monitor Serie del nodo (`<< respuesta recibida` o `sin respuesta… reintento`) con el concentrador conectado.
+- **Salida serie corrupta:** antes, durante la transmisión por radio, el Monitor Serie se llenó de caracteres repetidos (parece cable/alimentación USB; sin confirmar). El puente descarta las líneas rotas, pero conviene un buen cable en el concentrador.
+- **10 nodos y más de un salto:** solo se probaron 2 nodos con 1 salto. Con 10 habrá que vigilar la saturación de la radio (buffers de 64 mensajes vistos y 16 reenvíos, dispersión de 5–60 ms). El reenvío con varios saltos no se ha visto en placas reales.
+- **Puente en el PC:** hoy el concentrador está en el PC, no en la Pi; si el PC se apaga o el puente se detiene, no llega nada. Además, si el puerto está ocupado, el puente escribe «No pude abrir COM6» cada 3 s (ruidoso, pero inofensivo).
+- **Nube real:** `uplink` y el cifrado se probaron contra un AWS simulado. Falta la URL, la clave pública y el formato real de la API que entreguen (el mapeo de campos está en `scripts/lib/uplink-core.ts`).
+- **Claves por nodo:** el diagrama habla de un par de claves por nodo y claves compartidas entre nodos. Aquí los nodos solo llevan la clave **pública** de la Pi (cifrado de extremo a extremo): cumple «solo el destino descifra» y los nodos intermedios no pueden leer, pero no hay claves propias por nodo.
+- **Sensores reales:** temperatura, humedad y suelo son **simulados**; el flujo se lee de un sensor real solo con `USAR_SENSOR_FLUJO 1` (sin probar en placa).
+- **Raspberry Pi:** ya está desplegada y funcionando (ver «Qué se hizo»). Falta pasar el concentrador a la Pi (servicio `puente`) y, antes de producción, usar el modo normal con tokens (`ACEPTAR_NODOS_NUEVOS=0`).
+- **Migraciones `0010` y `0011`:** aplicadas en la base local de la Pi y del PC. Si se usa el `sync` a Supabase, hay que aplicar `0009` y `0010` allí (necesita credenciales de administrador) o `readings` se omite. La `0012` no se sincroniza.
+- **Pruebas de base de datos** (`tests/db`): las nuevas (`open-nodes.test.ts`) pasan contra PostgreSQL local. El resto de la suite no se pudo dar por buena: `.env.local` apunta a Supabase y la base local del PC no tiene los datos de ejemplo (`npm run db:seed`), así que 16 pruebas fallan por el entorno, no por el código.
+- **Seguridad antes de producción:** `POST /relay` no pide autenticación HTTP y el modo abierto acepta cualquier identificador y cualquier chip puede renombrar su invernadero (ver `PRUEBAS_TEMPORALES.md`).
+- **⚠ Credenciales en el historial de git:** `dashboard/.env.local` y `dashboard/.env.admin.local` están versionados (commit `3bc8ed9`, «credenciales versionadas») con la contraseña de la base de Supabase, la de administrador y `APP_SECRET`, y el repositorio de GitHub es **público**. Hay que rotar esas contraseñas y el `APP_SECRET`, y dejar de versionar esos archivos (el historial no se borra solo).
+- **Datos de prueba:** la base local del PC conserva invernaderos de pruebas (`GRUPO-A`, `GRUPO-B`, `I-FLUJO`, `I-PUENTE`). En la Pi, `I1`–`I10` (datos de clase; `I1` con 2711 lecturas) y los invernaderos duplicados de las pruebas con placas están **archivados**, no borrados; se restauran desde el dashboard.
 - **Reporte de los nodos:** las placas de prueba envían cada 10 s, pero el dashboard espera 300 s por defecto, así que «Tramas 24 h» muestra porcentajes engañosos.
 
 ## Qué incluye

@@ -18,8 +18,56 @@ import { audit } from './audit'
 
 export const MAX_GREENHOUSES_OPEN_MODE = 60
 
+/** Id de chip válido tal como llega en la ruta del mensaje («nodo-85bbc8»). Cualquier otra cosa no se liga a nada. */
+export const DEVICE_RE = /^[A-Za-z0-9_-]{1,40}$/
+
+/**
+ * Una placa que ya conocemos (por su id de chip) manda un NOMBRE nuevo: se renombra su invernadero en vez de crear otro.
+ * El historial, los umbrales y el lugar en el mapa se conservan. true = se renombró; false = no aplica (chip desconocido,
+ * invernadero archivado/deshabilitado, o el nombre ya es de otro) y hay que dar de alta normalmente.
+ */
+export async function renameOpenNode(db: Db, device: string, identifier: string): Promise<boolean> {
+  if (!DEVICE_RE.test(device)) return false
+  const hash = hashToken(identifier)
+  return inTransaction(db, async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtextextended('iot.greenhouses.create', 0))`
+    const [taken] = await tx<{ id: number }[]>`select id from iot.nodes where token_hash = ${hash}`
+    if (taken) return false   // el nombre ya existe: es otro nodo, no se mezcla
+    const [b] = await tx<{ node_id: number; greenhouse_id: number | null; code: string | null; name: string | null }[]>`
+      select n.id as node_id, n.greenhouse_id, g.code, g.name
+        from iot.open_devices d
+        join iot.nodes n on n.id = d.node_id
+        join iot.greenhouses g on g.id = n.greenhouse_id
+       where d.device = ${device} and n.enabled and g.archived_at is null
+       for update of n`
+    if (!b || b.greenhouse_id === null) return false
+
+    // El código (p. ej. «grupo-1») solo cambia si es válido y no lo usa otro invernadero; si no, solo cambia el nombre visible.
+    const codes = new Set((await tx<{ c: string }[]>`select lower(code) as c from iot.greenhouses where id <> ${b.greenhouse_id}`).map((r) => r.c))
+    const newCode = GREENHOUSE_CODE_RE.test(identifier) && !codes.has(identifier.toLowerCase()) ? identifier : b.code
+    await tx`
+      update iot.nodes set token_hash = ${hash}, token_prefix = ${identifier.slice(0, 6)}, label = ${`Nodo ${identifier}`.slice(0, 80)}
+       where id = ${b.node_id}`
+    await tx`update iot.greenhouses set name = ${identifier.slice(0, 80)}, code = ${newCode} where id = ${b.greenhouse_id}`
+    await tx`update iot.open_devices set seen_at = now() where device = ${device}`
+    await audit(tx, {
+      actorLabel: 'sistema', action: 'device.rename', target: `greenhouse:${b.greenhouse_id}`,
+      detail: { auto: true, device, anterior: b.code, identifier, code: newCode },
+    })
+    return true
+  })
+}
+
+/** Liga un id de chip a un nodo (si ya estaba ligado a otro, pasa a este). */
+export async function bindOpenDevice(db: Db, device: string, nodeId: number): Promise<void> {
+  if (!DEVICE_RE.test(device)) return
+  await db`
+    insert into iot.open_devices (device, node_id) values (${device}, ${nodeId})
+    on conflict (device) do update set node_id = excluded.node_id, seen_at = now()`
+}
+
 /** true = el nodo existe (recién creado o ya estaba); false = no se pudo (tope alcanzado o sin código libre). */
-export async function registerOpenNode(db: Db, identifier: string): Promise<boolean> {
+export async function registerOpenNode(db: Db, identifier: string, device: string | null = null): Promise<boolean> {
   const hash = hashToken(identifier)
   return inTransaction(db, async (tx) => {
     // Mismo candado que createGreenhouse: dos altas simultáneas no deben elegir el mismo id.
@@ -64,9 +112,15 @@ export async function registerOpenNode(db: Db, identifier: string): Promise<bool
       insert into iot.greenhouses (id, code, name, crop, x_m, y_m, area_m2, flow_lph)
       values (${id}, ${code}, ${identifier.slice(0, 80)}, null, ${pos.x}, ${pos.y}, 20, 100)`
     await tx`insert into iot.thresholds (greenhouse_id) values (${id})`
-    await tx`
+    const [created] = await tx<{ id: number }[]>`
       insert into iot.nodes (kind, greenhouse_id, label, token_hash, token_prefix)
-      values ('greenhouse', ${id}, ${`Nodo ${identifier}`.slice(0, 80)}, ${hash}, ${identifier.slice(0, 6)})`
+      values ('greenhouse', ${id}, ${`Nodo ${identifier}`.slice(0, 80)}, ${hash}, ${identifier.slice(0, 6)})
+      returning id`
+    if (device && DEVICE_RE.test(device) && created) {
+      await tx`
+        insert into iot.open_devices (device, node_id) values (${device}, ${created.id})
+        on conflict (device) do update set node_id = excluded.node_id, seen_at = now()`
+    }
     await audit(tx, { actorLabel: 'sistema', action: 'device.create', target: `greenhouse:${id}`, detail: { auto: true, identifier, code } })
     return true
   })

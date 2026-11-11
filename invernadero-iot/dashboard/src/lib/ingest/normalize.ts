@@ -22,13 +22,14 @@ export const ALIASES: Readonly<Record<string, readonly string[]>> = {
   suelo_raw: ['suelo', 'soil', 'soil_raw', 'soil_moisture', 'humedad_suelo'],
   luz: ['lux', 'light', 'luminosidad'],
   viento: ['wind', 'wind_ms', 'viento_ms'],
-  bomba: ['pump', 'pump_on', 'bomba_on', 'relay', 'rele'],
+  flujo_lmin: ['flujo', 'flujo_agua', 'caudal', 'caudal_lmin', 'flow', 'flow_lmin', 'flow_rate', 'water_flow'],
+  bomba: ['pump','pump_on', 'bomba_on', 'relay', 'rele'],
   rssi: ['wifi_rssi', 'signal'],
   fallas: ['faults', 'errores'],
 }
 
 const KNOWN = new Set<string>([
-  'v', 'fw', 'boot', 'seq', 'up', 'temp', 'hum_aire', 'suelo_raw', 'luz', 'viento', 'bomba', 'riego_s', 'est', 'esp', 'rssi', 'snr',
+  'v', 'fw', 'boot', 'seq', 'up', 'temp', 'hum_aire', 'suelo_raw', 'luz', 'viento', 'flujo_lmin', 'bomba', 'riego_s', 'est', 'esp', 'rssi', 'snr',
   'fallas', 'ev', 'acks',
 ])
 

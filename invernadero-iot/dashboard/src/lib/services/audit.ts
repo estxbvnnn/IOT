@@ -13,7 +13,7 @@ export const AUDIT_ACTIONS = [
   'thresholds.update', 'schedule.create', 'schedule.update', 'schedule.delete', 'schedule.trigger',
   'alert.ack', 'data.export',
   'user.create', 'user.update', 'user.deactivate', 'user.activate', 'user.password_reset', 'user.mfa_reset', 'user.greenhouses',
-  'device.create', 'device.rotate_token', 'device.enable', 'device.disable', 'device.auth_failed', 'device.first_seen',
+  'device.create', 'device.rename', 'device.rotate_token', 'device.enable', 'device.disable', 'device.auth_failed', 'device.first_seen',
   'greenhouse.create', 'greenhouse.update', 'greenhouse.archive', 'greenhouse.restore', 'site.update',
   'audit.verify', 'system.seed',
 ] as const

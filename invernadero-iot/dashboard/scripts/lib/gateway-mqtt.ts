@@ -112,7 +112,8 @@ export function crearProcesador(gw: Gateway, o: PayloadOptions) {
     }
     let reply: FrameReply
     try {
-      reply = await gw.ingestFrame(tx.authorization, tx.raw, null, route)
+      // El id de chip (nodo-xxxxxx) sale del tema autenticado (va en los datos adicionales del cifrado), no de la trama.
+      reply = await gw.ingestFrame(tx.authorization, tx.raw, null, { ...route, device: TX_RE.exec(topic)?.[1] ?? route.device ?? null })
     } catch (e) {
       o.log(`${route.transport.toUpperCase()}: error inesperado (${(e as Error).message})`)
       reply = { status: 500, body: { ok: false, error: 'server' } }

@@ -31,6 +31,7 @@ export const AUDIT_LABEL: Record<AuditAction, string> = {
   'user.mfa_reset': 'Segundo factor restablecido',
   'user.greenhouses': 'Sectores asignados',
   'device.create': 'Nodo creado',
+  'device.rename': 'Nodo renombrado (misma placa)',
   'device.rotate_token': 'Token de nodo rotado',
   'device.enable': 'Nodo habilitado',
   'device.disable': 'Nodo deshabilitado',

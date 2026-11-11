@@ -1,10 +1,10 @@
-import { Clock, Droplets, Sprout, Sun, Thermometer } from 'lucide-react'
+import { Clock, Droplets, Sprout, Thermometer, Waves } from 'lucide-react'
 import { BandChip, PumpChip } from '@/components/ui/status'
 import { SoilMeter } from '@/components/ui/soil-meter'
 import { Stat } from '@/components/ui/stat'
 import { SOIL_BAND_INFO } from '@/lib/domain/soil'
 import type { GreenhouseSummary } from '@/lib/domain/types'
-import { fmtAgo, fmtDateTime, fmtDuration, fmtLux, fmtNum } from '@/lib/format'
+import { fmtAgo, fmtDateTime, fmtDuration, fmtNum } from '@/lib/format'
 
 /** Detalle de la bomba según lo que informó el nodo: en marcha, en espera entre riegos o lista. */
 function pumpDetail(s: GreenhouseSummary): string {
@@ -78,7 +78,13 @@ export function CurrentState({ summary: s }: { summary: GreenhouseSummary }) {
           unit={s.humAir === null ? undefined : '%'}
           detail={`Rango deseado ${fmtNum(t.humAirMin, 0)}–${fmtNum(t.humAirMax, 0)} %`}
         />
-        <Stat label="Luz" icon={Sun} value={fmtLux(s.lightLux)} detail={s.lightLux === null ? 'Sin sensor BH1750' : 'Sensor BH1750'} />
+        <Stat
+          label="Flujo de agua"
+          icon={Waves}
+          value={fmtNum(s.flowLmin, 2)}
+          unit={s.flowLmin === null ? undefined : 'L/min'}
+          detail={s.flowLmin === null ? 'Sin sensor de flujo' : 'Caudal instantáneo (sensor de pulsos)'}
+        />
         <Stat
           label="Último dato"
           icon={Clock}

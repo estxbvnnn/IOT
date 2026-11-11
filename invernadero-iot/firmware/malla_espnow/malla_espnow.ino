@@ -1,30 +1,28 @@
 /* =====================================================================
-   MALLA ESP-NOW  -  mismo sketch para todos los nodos (ESP8266, NodeMCU)
+   MALLA ESP-NOW  -  mismo sketch para todas las placas (ESP8266, NodeMCU); el rol se elige con PERFIL
 
-   Idea: cada nodo manda sus datos CIFRADOS (RSA-2048 + AES-256-GCM, solo el servidor puede abrirlos) al servidor que hace de
-   Raspberry Pi (pasarela del dashboard, por WiFi). Si no consigue que el servidor le responda, los difunde por ESP-NOW: cualquier
-   vecino los retransmite (hasta MAX_SALTOS saltos) hasta que lo recibe un nodo CON red, que los sube en nombre del origen.
-   Solo la Pi/PC sube a la nube (el servicio «sync»): ningun nodo habla con la nube.
+   Es el diagrama del proyecto: los invernaderos (nodos) forman una malla por radio, un CONCENTRADOR la une por USB con la
+   Raspberry Pi (o el PC que la simula), y solo la Pi habla con la nube (servicio «uplink», cada 5 s). Ninguna placa toca la nube.
 
-     nodo sin ruta ──ESP-NOW──► vecino (sin red) ──ESP-NOW──► vecino CON red ──POST /relay/nodo-<origen>──► pasarela (PC/Pi)
-          ▲                                                                                                       │
-          └────────────── respuesta cifrada con la clave de un solo uso (vuelve por inundacion) ◄────────────────┘
+     nodo (PERFIL 0) ──ESP-NOW──► nodo vecino ──ESP-NOW──► CONCENTRADOR (PERFIL 1) ──USB──► puente ──/relay──► pasarela (Pi/PC)
+          ▲                      (retransmite, TTL-1)                                                                │
+          └──────────── respuesta cifrada con la clave de un solo uso (vuelve por inundacion) ◄──────────────────────┘
 
-   Los relevos NO abren nada: el contenido solo lo abre la pasarela. La identidad del nodo es MI_ID, que va dentro del mensaje
-   cifrado; el relevo solo informa «lo subi yo» (cabeceras X-Via y X-Saltos).
-   Los nodos NO llevan clave privada: solo la clave PUBLICA del servidor.
+   Cada nodo manda sus datos CIFRADOS (RSA-2048 + AES-256-GCM, solo la pasarela puede abrirlos). Los relevos y el concentrador NO
+   abren nada. La identidad del nodo es MI_ID, que va dentro del mensaje cifrado. Los nodos NO llevan clave privada: solo la clave
+   PUBLICA del servidor. Con PERFIL 2 (respaldo) un nodo con WiFi tambien puede subir por HTTP a la pasarela.
 
    PASOS
      1) Placa NodeMCU 1.0 con el core "esp8266 by ESP8266 Community" 3.1.2. No hay que instalar bibliotecas.
      2) Clave del servidor (el PC/Pi): su par RSA-2048; aqui va solo la PUBLICA:
           node pegar-claves.mjs malla_espnow.ino --socio publica-del-servidor.pem
-     3) NO hace falta token: el nodo se identifica con MI_ID (vacio = "nodo-<id de la placa>", unico y automatico, asi el MISMO sketch sirve para todas las placas; o un nombre como "GRUPO-A"). La pasarela en modo de pruebas (ACEPTAR_NODOS_NUEVOS=1) da de alta cada identificador nuevo con su propio invernadero.
-     4) Configure WIFI_*, GATEWAY_HOST (IP del PC/Pi en la misma red), nada mas (MI_ID es opcional). Suba. El Monitor Serie (115200) muestra todo.
-     5) Canal: con WiFi, ESP-NOW usa el canal del router (todos los nodos del mismo router coinciden). Un nodo que NO consigue conectar
-        busca el router por su nombre (WIFI_SSID) y usa SU canal aunque no pueda entrar; solo si ni siquiera lo ve usa CANAL
-        (pongalo igual al canal del router: la placa con red lo imprime, «canal N»). Con USAR_WIFI 0 siempre usa CANAL.
-   Pruebas: FORZAR_RADIO 1 hace que ESTE nodo mande SIEMPRE por radio (otro nodo con red lo sube). Con GATEWAY_HOST equivocado en un
-   nodo con WiFi pasa lo mismo a los 2 fallos.
+     3) NO hace falta token: el nodo se identifica con MI_ID (vacio = "nodo-<id de la placa>", unico y automatico, asi el MISMO sketch
+        sirve para todas las placas). La pasarela en modo de pruebas (ACEPTAR_NODOS_NUEVOS=1) da de alta cada identificador nuevo.
+     4) Elija PERFIL (0 = nodo, 1 = concentrador) y suba. CANAL debe ser el MISMO en todas las placas. Los perfiles 0 y 1 no usan WiFi.
+        Concentrador: conectelo por USB a la Pi/PC y ejecute `npm run puente -- <puerto>` (dashboard/). El Monitor Serie (115200)
+        muestra todo, pero el puerto no se comparte con el puente.
+     5) Solo PERFIL 2 (nodo con WiFi): config_local.h con WIFI_SSID, WIFI_PASS y GATEWAY_HOST. Con WiFi, ESP-NOW usa el canal del
+        router; un nodo que no consigue conectar busca el router por su nombre y usa SU canal (si no lo ve, CANAL).
    ===================================================================== */
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -33,24 +31,44 @@
 #include <bearssl/bearssl.h>
 
 /* ------------------------------ CONFIGURACION ------------------------------ */
-/* PERFIL: un solo archivo para todas las placas (NO guarde copias dentro de esta carpeta: Arduino junta todos los .ino y falla).
-     0 = normal: MI_ID vacio (cada placa se llama "nodo-<id de la placa>") y sube por la red; es el que va en TODAS las placas.
-     1 = prueba, placa "GRUPO-A": sube por la red (es la que hace de puerta de entrada).
-     2 = prueba, placa "GRUPO-B": manda SIEMPRE por radio (para ver que A sube lo suyo).                                          */
-#define PERFIL          0
-#if PERFIL == 1
-  #define MI_ID         "GRUPO-A"
-  #define FORZAR_RADIO  0
-#elif PERFIL == 2
-  #define MI_ID         "GRUPO-B"
-  #define FORZAR_RADIO  1
-#else
-  #define MI_ID         ""                               // identificador de ESTE nodo ("GRUPO-A", "nodo-b"...; letras, numeros, - y _; max 40). Vacio = "nodo-<id de la placa>" automatico
-  #define FORZAR_RADIO  0                                // 1 = este nodo envia siempre por radio (SOLO para probar la malla)
-#endif
-#define PERIODO_S       10                      // segundos entre envios (0 = no envia, solo hace de relevo)
+/* NOMBRE_NODO: como se llamara ESTA placa en el dashboard. Cada grupo cambia SOLO esta linea: "grupo-1", "grupo-2", ...
+   Letras, numeros, - y _ (max 40). Debe ser DISTINTO en cada placa. Vacio = "nodo-<id de la placa>" automatico (unico, pero sin sentido). */
+#define NOMBRE_NODO     ""
 
-#define USAR_WIFI       1                        // 1 = intenta conectar al router (y puede subir/retransmitir); 0 = solo radio
+/* PERFIL: un solo archivo para todas las placas (NO guarde copias dentro de esta carpeta: Arduino junta todos los .ino y falla).
+   Es el diagrama del proyecto: los invernaderos (nodos) forman la malla, el CONCENTRADOR la oye y la une por USB con la Raspberry Pi.
+     0 = NODO de invernadero (el que va en casi todas las placas): mide, cifra y habla SOLO por radio (ESP-NOW) en un canal fijo.
+         No usa WiFi ni router: otros nodos le retransmiten hasta el concentrador.
+     1 = CONCENTRADOR PRINCIPAL: se conecta por USB a la Pi/PC (puente serie, `npm run puente`), recibe lo de la malla, lo entrega
+         a la pasarela y devuelve la respuesta por la malla. No mide nada.
+     2 = nodo con WiFi (respaldo, modo anterior): ademas de la radio, sube por HTTP a la pasarela si hay red. Necesita config_local.h. */
+#ifndef PERFIL
+  #define PERFIL        1
+#endif
+#if PERFIL == 1
+  #define MI_ID           "concentrador"
+  #define ROL_CONCENTRADOR 1
+  #define USAR_WIFI       0
+  #define FORZAR_RADIO    0
+  #define PERIODO_S       0                              // el concentrador no mide ni envia datos propios
+#elif PERFIL == 2
+  #define MI_ID           NOMBRE_NODO
+  #define ROL_CONCENTRADOR 0
+  #define USAR_WIFI       1
+  #define FORZAR_RADIO    0
+  #define PERIODO_S       10
+#else
+  #define MI_ID           NOMBRE_NODO                    // identificador de ESTE nodo: se cambia arriba, en NOMBRE_NODO
+  #define ROL_CONCENTRADOR 0
+  #define USAR_WIFI       0
+  #define FORZAR_RADIO    0                              // 1 = (solo con WiFi) manda siempre por radio para probar la malla
+  #define PERIODO_S       10                             // segundos entre envios (0 = no envia, solo hace de relevo)
+#endif
+
+/* Sensor de flujo de agua (YF-S201 o similar, de pulsos): 1 = lo lee en SENSOR_FLUJO_PIN; 0 = valor simulado. */
+#define USAR_SENSOR_FLUJO 0
+#define SENSOR_FLUJO_PIN  D5                             // GPIO14 de la NodeMCU; cable de senal del sensor (con 5 V use un divisor de tension: el ESP8266 es de 3,3 V)
+#define PULSOS_POR_SEG_POR_LMIN 7.5f                     // YF-S201: frecuencia(Hz) = 7,5 x caudal(L/min)
 /* Tu WiFi y la IP de la pasarela van en config_local.h (copie config_local.example.h): ese archivo NO se sube a git.
    Si no existe, se usan estos valores de ejemplo y la placa no conectara. */
 #if __has_include("config_local.h")
@@ -66,7 +84,7 @@
   #define GATEWAY_HOST  "192.168.0.100"                  // IP del PC o de la Pi que corre la pasarela (puerto 3100)
 #endif
 #define GATEWAY_PORT    3100
-#define CANAL           6                        // canal ESP-NOW cuando no hay WiFi (igual al canal del router)
+#define CANAL           6                        // canal ESP-NOW de TODA la malla sin WiFi (iguales en todas las placas); con WiFi manda el canal del router
 
 #define MAX_SALTOS      3                        // saltos maximos por radio (TTL inicial)
 #define WIFI_REINTENTO_S 30                      // cada cuanto reintenta el WiFi si no esta conectado
@@ -75,22 +93,22 @@
 /* Clave PUBLICA RSA-2048 del servidor. La rellena pegar-claves.mjs; hasta entonces la placa avisa y no envia. */
 // RSA_SOCIO_PUBLICA_INICIO  (clave publica del otro grupo)
 static const uint8_t RSA_SOCIO_N[256] = {
-  0xba, 0xa6, 0xb9, 0x6c, 0x1a, 0x7c, 0xc3, 0x80, 0xa1, 0x9a, 0x1d, 0xb5, 0x94, 0x12, 0x2b, 0x73,
-  0x5e, 0x12, 0xfd, 0x8e, 0x92, 0x40, 0xfb, 0xeb, 0x1b, 0x5e, 0x35, 0x76, 0x17, 0x71, 0x6f, 0xd5,
-  0x14, 0x69, 0xd9, 0xa5, 0x81, 0x8b, 0xca, 0x84, 0x79, 0x8e, 0xc6, 0xce, 0xf0, 0x6c, 0xc3, 0x19,
-  0x93, 0x12, 0x60, 0xcd, 0xd4, 0xc1, 0xda, 0x0b, 0x66, 0x88, 0xcc, 0x7b, 0x97, 0x63, 0x30, 0xca,
-  0xa6, 0xf4, 0x02, 0x93, 0x02, 0xf9, 0xc3, 0xbf, 0x9e, 0xe9, 0x4b, 0x24, 0x03, 0x0f, 0xdd, 0x5d,
-  0x28, 0x8d, 0xdd, 0x2e, 0x84, 0x45, 0x38, 0xba, 0x3a, 0x36, 0xe2, 0x6e, 0x36, 0x96, 0x5f, 0xf9,
-  0x3d, 0x79, 0x9f, 0x0a, 0xcf, 0xc9, 0x64, 0xe4, 0x54, 0xd1, 0xb1, 0x1f, 0x26, 0x3a, 0x0e, 0xa9,
-  0x61, 0xec, 0x1c, 0xa0, 0xd8, 0x16, 0xd4, 0x25, 0xf1, 0xb1, 0x20, 0xc6, 0xda, 0xf1, 0x2c, 0x40,
-  0x55, 0xbc, 0x9b, 0x17, 0xf3, 0xa6, 0x08, 0x5d, 0x68, 0x24, 0x1f, 0x5b, 0xca, 0x00, 0xc3, 0x7d,
-  0xcc, 0xd2, 0x08, 0x98, 0x7c, 0x8e, 0x6d, 0x15, 0x25, 0x99, 0xd7, 0x4c, 0x9f, 0x66, 0x56, 0xd5,
-  0x0f, 0x25, 0x73, 0x5e, 0x28, 0xd6, 0xb4, 0xdb, 0xc8, 0xb0, 0x2a, 0xe1, 0xef, 0x24, 0x89, 0x8b,
-  0x12, 0xc2, 0xb0, 0xff, 0x23, 0xb4, 0x65, 0x03, 0x98, 0x5e, 0x3a, 0xcd, 0x70, 0x7b, 0xab, 0xe2,
-  0xb4, 0x05, 0xec, 0xe8, 0xe1, 0x8a, 0xc4, 0xd7, 0x08, 0x6d, 0x26, 0x83, 0xcd, 0x3c, 0x7e, 0x68,
-  0xb4, 0x8c, 0xa6, 0x2a, 0xbc, 0xb2, 0x59, 0x8e, 0xfd, 0x85, 0x95, 0x49, 0x5f, 0xef, 0x9c, 0xa8,
-  0x37, 0x1b, 0xca, 0x1a, 0x30, 0x07, 0x96, 0xa0, 0xd9, 0x89, 0xa2, 0xf2, 0xab, 0x72, 0x7c, 0x86,
-  0xdc, 0x8e, 0x81, 0x41, 0x88, 0xe2, 0xc1, 0x0c, 0xbf, 0xa7, 0x39, 0x94, 0x78, 0x28, 0x5c, 0x5f
+  0xe8, 0x04, 0xc0, 0xef, 0xd1, 0x6c, 0xfe, 0x0e, 0x77, 0x47, 0x89, 0x79, 0xbf, 0xe5, 0x39, 0x2a,
+  0x17, 0x3b, 0xca, 0x50, 0xb7, 0x4a, 0xbe, 0x74, 0x0c, 0x87, 0xdb, 0x18, 0x07, 0x8a, 0x0a, 0x51,
+  0x30, 0x81, 0x7c, 0x54, 0x2c, 0x46, 0xc8, 0xcf, 0x59, 0x9c, 0xba, 0xe9, 0x2c, 0xc7, 0x13, 0xa0,
+  0xfb, 0x99, 0xab, 0x52, 0x3d, 0xcc, 0x1f, 0xb3, 0xe6, 0xe8, 0xf3, 0x96, 0x64, 0x05, 0x43, 0x8f,
+  0x22, 0xd4, 0xd9, 0x15, 0xc0, 0x1e, 0xc3, 0x04, 0x09, 0xed, 0x1c, 0x70, 0xa6, 0x5d, 0x36, 0xf5,
+  0x86, 0x0a, 0x36, 0x9e, 0x95, 0x0f, 0xfc, 0xc6, 0x34, 0x4a, 0x38, 0x2d, 0x57, 0xef, 0xb7, 0x03,
+  0x6a, 0xc2, 0x2e, 0x80, 0x46, 0x15, 0x80, 0x32, 0xa9, 0x8d, 0xb2, 0x1b, 0x2f, 0x58, 0x29, 0xd0,
+  0x4a, 0x39, 0x48, 0x60, 0xe2, 0xe8, 0x43, 0xa2, 0xeb, 0x7e, 0xd9, 0xd6, 0x24, 0x9e, 0x11, 0xdc,
+  0xbf, 0x9c, 0xab, 0x2c, 0x1a, 0xd9, 0x12, 0x52, 0xe6, 0xc4, 0x72, 0xc9, 0xed, 0x9f, 0x71, 0x52,
+  0xc5, 0x96, 0x42, 0xd6, 0xd9, 0x9b, 0xa6, 0x49, 0x72, 0x3c, 0xa2, 0x3c, 0x4d, 0x49, 0x7f, 0x6e,
+  0x62, 0x4f, 0x30, 0xb9, 0xdd, 0xc1, 0xb1, 0x3c, 0x09, 0xcb, 0xed, 0x20, 0xf4, 0x9f, 0x08, 0x27,
+  0x6f, 0xc0, 0xc5, 0x26, 0xb1, 0x33, 0x16, 0xa6, 0xd1, 0xd6, 0xc6, 0xe4, 0xc1, 0x2a, 0xc4, 0x55,
+  0x3a, 0x55, 0x36, 0x84, 0xf6, 0x1f, 0xb3, 0xdb, 0x90, 0xf2, 0x57, 0x96, 0xae, 0xee, 0xeb, 0x68,
+  0xe2, 0x9b, 0xa0, 0x59, 0x21, 0xdb, 0x85, 0x0b, 0x2f, 0x04, 0x09, 0xfd, 0x6e, 0x55, 0x23, 0xc5,
+  0x86, 0x00, 0x4b, 0x57, 0x3d, 0xcc, 0xc5, 0x1e, 0xcb, 0x02, 0x2b, 0xdb, 0x85, 0xe3, 0x4c, 0x18,
+  0x34, 0xef, 0x31, 0x5e, 0xed, 0x51, 0x7a, 0xd2, 0x9b, 0xd9, 0xe6, 0x38, 0x5a, 0x4b, 0x03, 0x5d
 };
 static const uint8_t RSA_SOCIO_E[3] = {
   0x01, 0x00, 0x01
@@ -103,6 +121,9 @@ static const uint8_t RSA_SOCIO_E[3] = {
 static const uint8_t  MAGIA      = 0xE6;
 static const uint8_t  TIPO_DATOS = 0x11;
 static const uint8_t  TIPO_RESP  = 0x12;
+static const uint8_t  TIPO_HOLA  = 0x13;                       // baliza: «aqui estoy» (1 byte de carga: bit0 = soy el concentrador); con ella los nodos se conocen
+static const uint32_t HOLA_MS    = 30000;                      // cada cuanto se emite la baliza
+static const uint32_t VECINO_VIGENTE_MS = 100000;              // un nodo del que no se oye baliza en este tiempo deja de contar
 static const size_t   CAB        = 12;
 static const size_t   FRAG       = 238;
 static const uint8_t  MAX_FRAGS  = 6;
@@ -123,7 +144,7 @@ static volatile bool tx_hecho = false;
 static volatile bool puede_subir = false;                      // WiFi conectado y servidor respondiendo: este nodo puede subir tramas
 static uint32_t radio_hasta = 0;                               // mientras no se cumpla, la red normal se considera caida
 static uint8_t  fallos_red = 0;
-static uint32_t t_wifi = 0, t_envio = 0;
+static uint32_t t_wifi = 0, t_envio = 0, t_hola = 0;
 
 struct Slot {                                                   // mensaje que se va armando con los fragmentos (lo llena el callback del SDK)
   volatile bool completo;
@@ -137,21 +158,47 @@ static Slot dat, resp;                                          // dat = datos a
 
 /* Cache de lo ya visto: evita inundar la malla (y que un fragmento dé vueltas). */
 struct Visto { uint32_t id, seq; uint8_t tipo, idx, intento, usado; };
-static Visto vistos[32];
+static const uint8_t N_VISTOS = 64;                             // con 10 nodos hay muchos fragmentos en el aire a la vez
+static Visto vistos[N_VISTOS];
 static uint8_t vistos_i = 0;
 static bool yaVisto(uint8_t tipo, uint32_t id, uint32_t seq, uint8_t idx, uint8_t intento) {
-  for (uint8_t i = 0; i < 32; i++) {
+  for (uint8_t i = 0; i < N_VISTOS; i++) {
     const Visto& v = vistos[i];
     if (v.usado && v.tipo == tipo && v.id == id && v.seq == seq && v.idx == idx && v.intento == intento) return true;
   }
   vistos[vistos_i] = { id, seq, tipo, idx, intento, 1 };
-  vistos_i = (uint8_t)((vistos_i + 1) % 32);
+  vistos_i = (uint8_t)((vistos_i + 1) % N_VISTOS);
   return false;
 }
 
 /* Cola de reenvio: el callback no puede transmitir; copia el paquete y el bucle lo emite tras un retardo aleatorio (evita choques). */
 struct Fwd { uint8_t n; uint8_t d[CAB + FRAG]; uint32_t due; };
-static Fwd fwd[10];
+static const uint8_t N_FWD = 16;
+static Fwd fwd[N_FWD];
+
+/* Tabla de nodos conocidos (por las balizas TIPO_HOLA que llegan por inundacion): «todos se conocen». */
+struct Vecino { uint32_t id; uint32_t t_ms; uint8_t saltos, conc, usado; };
+static Vecino vecinos[16];
+static uint8_t hola_seq = 0;
+static void anotarVecino(uint32_t id, uint8_t saltos, uint8_t conc) {
+  int libre = -1;
+  for (uint8_t i = 0; i < 16; i++) {
+    if (vecinos[i].usado && vecinos[i].id == id) { vecinos[i].t_ms = millis(); vecinos[i].saltos = saltos; vecinos[i].conc = conc; return; }
+    if (!vecinos[i].usado && libre < 0) libre = i;
+    else if (vecinos[i].usado && (uint32_t)(millis() - vecinos[i].t_ms) > VECINO_VIGENTE_MS && libre < 0) libre = i;
+  }
+  if (libre >= 0) vecinos[libre] = { id, millis(), saltos, conc, 1 };
+}
+static uint8_t contarVecinos(bool* conc_visto) {
+  uint8_t n = 0;
+  *conc_visto = false;
+  for (uint8_t i = 0; i < 16; i++) {
+    if (!vecinos[i].usado || (uint32_t)(millis() - vecinos[i].t_ms) > VECINO_VIGENTE_MS) continue;
+    n++;
+    if (vecinos[i].conc) *conc_visto = true;
+  }
+  return n;
+}
 
 /* Mi envio en curso (por radio). */
 static uint8_t  msg_pend[MSG_MAX];
@@ -269,7 +316,7 @@ static void alRecibir(uint8_t* mac, uint8_t* d, uint8_t len) {  // callback del 
   (void)mac;
   if (len <= CAB || d[0] != MAGIA) return;
   const uint8_t  tipo = d[1];
-  if (tipo != TIPO_DATOS && tipo != TIPO_RESP) return;
+  if (tipo != TIPO_DATOS && tipo != TIPO_RESP && tipo != TIPO_HOLA) return;
   const uint32_t id = leer32(d + 2), seq = leer32(d + 6);
   const uint8_t  idx = d[10] & 15, ttl = d[10] >> 4, total = d[11] & 15, intento = d[11] >> 4;
   const size_t   carga = len - CAB;
@@ -278,6 +325,10 @@ static void alRecibir(uint8_t* mac, uint8_t* d, uint8_t len) {  // callback del 
   const bool mio = (id == mi_id);
   if (tipo == TIPO_DATOS && mio) return;                        // eco de mi propio envio retransmitido por un vecino
   if (yaVisto(tipo, id, seq, idx, intento)) return;             // ya lo vi (o ya lo reenvie)
+  if (tipo == TIPO_HOLA) {                                      // baliza de otro nodo: lo anoto como conocido y la propago (abajo)
+    if (mio) return;
+    anotarVecino(id, (uint8_t)(MAX_SALTOS - ttl + 1), d[CAB] & 1);
+  }
 
   Slot* s = nullptr;
   if (tipo == TIPO_RESP && mio) s = &resp;                      // respuesta a mis datos
@@ -304,11 +355,11 @@ static void alRecibir(uint8_t* mac, uint8_t* d, uint8_t len) {  // callback del 
   }
   /* No es para mi / no puedo subirlo: lo retransmito (inundacion con TTL), tambien las respuestas ajenas de vuelta al origen. */
   if (ttl == 0 || (tipo == TIPO_RESP && mio)) return;
-  for (uint8_t i = 0; i < 10; i++) {
+  for (uint8_t i = 0; i < N_FWD; i++) {
     if (fwd[i].n != 0) continue;
     memcpy(fwd[i].d, d, len);
     fwd[i].d[10] = (uint8_t)(idx | ((ttl - 1) << 4));
-    fwd[i].due = millis() + 5 + (RANDOM_REG32 % 36);
+    fwd[i].due = millis() + 5 + (RANDOM_REG32 % 56);            // con muchos nodos, mas dispersion para que no choquen
     fwd[i].n = len;
     return;
   }
@@ -335,15 +386,26 @@ static bool enviarMensaje(uint8_t tipo, uint32_t id, uint32_t seq, const uint8_t
 }
 
 static void atenderReenvios() {
-  for (uint8_t i = 0; i < 10; i++) {
+  for (uint8_t i = 0; i < N_FWD; i++) {
     if (fwd[i].n == 0 || (int32_t)(millis() - fwd[i].due) < 0) continue;
     const uint8_t ttl = fwd[i].d[10] >> 4;
     esp_now_send(BCAST, fwd[i].d, fwd[i].n);
-    Serial.printf("   reenvio fragmento %u/%u de nodo-%06x seq %lu (ttl restante %u)\n", (unsigned)((fwd[i].d[10] & 15) + 1), (unsigned)(fwd[i].d[11] & 15),
-                  (unsigned)leer32(fwd[i].d + 2), (unsigned long)leer32(fwd[i].d + 6), (unsigned)ttl);
+    if (fwd[i].d[1] != TIPO_HOLA)
+      Serial.printf("   reenvio fragmento %u/%u de nodo-%06x seq %lu (ttl restante %u)\n", (unsigned)((fwd[i].d[10] & 15) + 1), (unsigned)(fwd[i].d[11] & 15),
+                    (unsigned)leer32(fwd[i].d + 2), (unsigned long)leer32(fwd[i].d + 6), (unsigned)ttl);
     fwd[i].n = 0;
     delay(3);
   }
+}
+
+/* Baliza «aqui estoy»: la oyen (y propagan, con TTL) todos los nodos, asi cada uno sabe cuantos nodos hay en la malla y si ve al concentrador. */
+static void enviarHola() {
+  uint8_t paq[CAB + 1];
+  paq[0] = MAGIA; paq[1] = TIPO_HOLA; poner32(paq + 2, mi_id); poner32(paq + 6, ++hola_seq);
+  paq[10] = (uint8_t)(0 | (MAX_SALTOS << 4)); paq[11] = 1;      // idx 0 de 1 fragmento, intento 0
+  paq[CAB] = ROL_CONCENTRADOR ? 1 : 0;
+  yaVisto(TIPO_HOLA, mi_id, hola_seq, 0, 0);                    // no reprocesar mi propia baliza si un vecino me la devuelve
+  esp_now_send(BCAST, paq, (int)sizeof(paq));
 }
 
 /* ------------------------------ WiFi y servidor ------------------------------ */
@@ -416,12 +478,37 @@ static void anotarFalloRed() {
 /* >>> AQUI se arma el JSON de sus datos. Los valores son FALSOS; cambielos por lecturas reales. Formato del contrato (docs/contrato-api.md):
    si falta algun campo el dashboard lo acepta; solo `seq` es obligatorio. <<< */
 static float aleatorio(float a, float b) { return a + (b - a) * (float)random(0, 10000) / 10000.0f; }
+
+/* Flujo de agua en L/min. Con USAR_SENSOR_FLUJO 1 se cuentan los pulsos del sensor desde la lectura anterior; si no, un valor simulado. */
+#if USAR_SENSOR_FLUJO
+static volatile uint32_t pulsos_flujo = 0;
+static uint32_t t_flujo = 0;
+static void ICACHE_RAM_ATTR contarPulso() { pulsos_flujo++; }
+static void iniciarFlujo() {
+  pinMode(SENSOR_FLUJO_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(SENSOR_FLUJO_PIN), contarPulso, FALLING);
+  t_flujo = millis();
+}
+static float leerFlujo() {
+  noInterrupts(); const uint32_t p = pulsos_flujo; pulsos_flujo = 0; interrupts();
+  const uint32_t ahora = millis();
+  const float seg = (float)(ahora - t_flujo) / 1000.0f;
+  t_flujo = ahora;
+  return seg > 0.1f ? ((float)p / seg) / PULSOS_POR_SEG_POR_LMIN : 0.0f;
+}
+#else
+static void iniciarFlujo() {}
+static float leerFlujo() { return aleatorio(1.2f, 2.4f); }
+#endif
+
 static size_t armarJson(char* out, size_t cap) {
+  bool conc = false;
+  const unsigned nvec = contarVecinos(&conc);                   // nodos de la malla que se oyen (por las balizas)
   return snprintf(out, cap,
-      "{\"v\":1,\"fw\":\"malla-1\",\"boot\":%lu,\"seq\":%lu,\"up\":%lu,\"temp\":%.1f,\"hum_aire\":%.1f,\"suelo_raw\":%d,"
-      "\"luz\":null,\"bomba\":0,\"riego_s\":0,\"est\":\"idle\",\"esp\":0,\"rssi\":%d,\"fallas\":[]}",
+      "{\"v\":1,\"fw\":\"malla-2\",\"boot\":%lu,\"seq\":%lu,\"up\":%lu,\"temp\":%.1f,\"hum_aire\":%.1f,\"suelo_raw\":%d,\"flujo_lmin\":%.2f,"
+      "\"luz\":null,\"bomba\":0,\"riego_s\":0,\"est\":\"idle\",\"esp\":0,\"rssi\":%d,\"vecinos\":%u,\"conc\":%d,\"fallas\":[]}",
       (unsigned long)boot_id, (unsigned long)envios, (unsigned long)(millis() / 1000), aleatorio(22.5f, 25.5f), aleatorio(56.0f, 64.0f),
-      (int)random(560, 640), (WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : -90));
+      (int)random(560, 640), (double)leerFlujo(), (WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : -90), nvec, conc ? 1 : 0);
 }
 
 static void mostrarRespuesta(char* texto, const char* origen) {
@@ -492,6 +579,59 @@ static void subirComoRelevo() {
   }
 }
 
+/* ------------------------------ Concentrador (PERFIL 1): puente USB con la Pi ------------------------------
+   Protocolo por el puerto serie (una linea por mensaje; lo que NO empieza con '@' es registro de depuracion y el puente lo ignora):
+     ESP -> Pi   @HOLA <nombre>
+                 @RX <origen-hex> <seq> <intento> <saltos> <via> <mensaje rsa1:...>      mensaje completo de un nodo de la malla
+     Pi  -> ESP  @TX <origen-hex> <seq> <intento> <respuesta rsa1:...>                   se difunde por la malla hacia el origen   */
+#if ROL_CONCENTRADOR
+static char linea_pi[MSG_MAX + 80];
+static size_t linea_n = 0;
+static bool   linea_descartar = false;
+
+static void pasarAlPuente() {
+  int saltos = (int)MAX_SALTOS - (int)dat.ttl + 1;
+  if (saltos < 1) saltos = 1;
+  if (saltos > 15) saltos = 15;
+  Serial.printf("\n@RX %06x %lu %u %d nodo-%06x ", (unsigned)dat.id, (unsigned long)dat.seq, (unsigned)dat.intento, saltos, (unsigned)mi_id);
+  Serial.write(dat.buf, dat.n);
+  Serial.print('\n');
+  dat.completo = false;
+}
+
+static void atenderLineaPi(char* l, size_t n) {
+  if (n < 5 || strncmp(l, "@TX ", 4) != 0) return;
+  char* p = l + 4;
+  char* fin = nullptr;
+  const uint32_t id = (uint32_t)strtoul(p, &fin, 16);
+  if (fin == p || *fin != ' ') return;
+  p = fin + 1;
+  const uint32_t seq = (uint32_t)strtoul(p, &fin, 10);
+  if (fin == p || *fin != ' ') return;
+  p = fin + 1;
+  const uint8_t intento = (uint8_t)strtoul(p, &fin, 10);
+  if (fin == p || *fin != ' ') return;
+  p = fin + 1;
+  const size_t nm = n - (size_t)(p - l);
+  const bool ok = enviarMensaje(TIPO_RESP, id, seq, (const uint8_t*)p, nm, MAX_SALTOS, intento);
+  Serial.printf(">> respuesta de la Pi hacia nodo-%06x seq %lu: %s por la malla\n", (unsigned)id, (unsigned long)seq, ok ? "difundida" : "NO se pudo difundir");
+}
+
+static void leerPuente() {
+  while (Serial.available() > 0) {
+    const int c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (!linea_descartar && linea_n > 0) { linea_pi[linea_n] = 0; atenderLineaPi(linea_pi, linea_n); }
+      linea_n = 0; linea_descartar = false;
+    } else if (linea_n < sizeof(linea_pi) - 1) {
+      linea_pi[linea_n++] = (char)c;
+    } else {
+      linea_descartar = true;                                   // linea demasiado larga: se ignora hasta el salto de linea
+    }
+  }
+}
+#endif
+
 static void atenderAcuse() {
   char* texto = nullptr;
   const bool mio = esperando && resp.seq == pend_seq;
@@ -505,6 +645,9 @@ static void atenderAcuse() {
 
 /* ------------------------------ setup / loop ------------------------------ */
 void setup() {
+#if ROL_CONCENTRADOR
+  Serial.setRxBufferSize(2048);                                 // la Pi manda lineas de hasta ~1,5 KB; el buffer por defecto (256) las cortaria
+#endif
   Serial.begin(115200);
   delay(300);
   system_update_cpu_freq(SYS_CPU_160MHZ);
@@ -514,7 +657,8 @@ void setup() {
   rngIniciar();
   snprintf(tema_tx_propio, sizeof(tema_tx_propio), "invernadero/nodo-%06x/tx", (unsigned)mi_id);
   snprintf(tema_rx_propio, sizeof(tema_rx_propio), "invernadero/nodo-%06x/rx", (unsigned)mi_id);
-  Serial.println("\n\n=== Malla ESP-NOW ===");
+  Serial.printf("\n\n=== Malla ESP-NOW · %s ===\n", ROL_CONCENTRADOR ? "CONCENTRADOR (puente USB con la Pi)" : (USAR_WIFI ? "nodo con WiFi (respaldo)" : "nodo de invernadero (solo radio)"));
+  iniciarFlujo();
 
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);                                 // el reintento lo controlo yo (un escaneo constante estorba a la radio)
@@ -537,8 +681,16 @@ void setup() {
   Serial.printf("MAC de esta placa: %s\n", WiFi.macAddress().c_str());
   Serial.printf("id nodo-%06x · canal ESP-NOW %d · saltos max %d\n", (unsigned)mi_id, (int)canal, (int)MAX_SALTOS);
   Serial.printf("clave publica del servidor: %s · identificador: %s\n", srv_ok ? "cargada" : "FALTA (pegar-claves.mjs)", mi_nombre);
+#if ROL_CONCENTRADOR
+  Serial.println("concentrador: oigo la malla y entrego cada mensaje a la Pi por USB (@RX); la respuesta vuelve por la malla (@TX). Ejecute «npm run puente» en la Pi/PC.");
+  Serial.printf("@HOLA %s\n", mi_nombre);
+#elif USAR_WIFI
   Serial.printf("servidor: http://%s:%d  · %s\n", GATEWAY_HOST, (int)GATEWAY_PORT, FORZAR_RADIO ? "FORZAR_RADIO (mis datos van siempre por radio)" : "mis datos van por la red y, si falla, por radio");
+#else
+  Serial.printf("solo radio en el canal %d: mis datos los retransmiten los vecinos hasta el concentrador (max %d saltos)\n", (int)canal, (int)MAX_SALTOS);
+#endif
   t_envio = millis() - (uint32_t)PERIODO_S * 1000UL + 4000UL;   // primer envio a los ~4 s
+  t_hola = millis() - HOLA_MS + 3000UL + (RANDOM_REG32 % 4000);  // primera baliza a los ~3-7 s (distinta en cada placa)
 }
 
 void loop() {
@@ -549,12 +701,20 @@ void loop() {
   if (!wifi && (uint32_t)(millis() - t_wifi) >= (uint32_t)WIFI_REINTENTO_S * 1000UL && !esperando) conectarWifi(10000);
   puede_subir = wifi && (int32_t)(millis() - radio_hasta) >= 0;
 #else
-  puede_subir = false;
+  puede_subir = ROL_CONCENTRADOR ? true : false;                // el concentrador es el unico que «sube» (a la Pi, por USB)
 #endif
 
-  if (resp.completo) atenderAcuse();
+#if ROL_CONCENTRADOR
+  leerPuente();
+  if (dat.completo) pasarAlPuente();
+  static uint32_t t_vivo = 0;
+  if ((uint32_t)(millis() - t_vivo) >= 20000) { t_vivo = millis(); Serial.printf("\n@HOLA %s\n", mi_nombre); }   // para que un puente que se conecte despues me reconozca
+#else
   if (dat.completo) subirComoRelevo();
+#endif
+  if (resp.completo) atenderAcuse();
   atenderReenvios();
+  if ((uint32_t)(millis() - t_hola) >= HOLA_MS) { t_hola = millis(); enviarHola(); }
 
   if (esperando && (uint32_t)(millis() - pend_t) >= ESPERA_ACUSE_MS) {
     if ((uint8_t)(pend_intento + 1) < MAX_INTENTOS) { pend_intento++; Serial.printf("   sin respuesta para el envio %lu; reintento por radio\n", (unsigned long)pend_seq); enviarRadio(); }
